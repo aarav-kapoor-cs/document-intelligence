@@ -9,8 +9,8 @@
 @if (service === 'document') {
   <h2>Document Intelligence</h2>
 
-  <p>Step 1: Choose one or more PDFs</p>
-  <input type="file" accept="application/pdf" multiple (change)="chooseFiles($event)" />
+  <p>Step 1: Choose one or more PDFs or images</p>
+  <input type="file" accept="application/pdf,image/*" multiple (change)="chooseFiles($event)" />
 
   @if (files.length > 0) {
     <p>Loaded files:</p>
@@ -20,7 +20,7 @@
       }
     </ul>
 
-    <p>Step 2: Write your prompt for these PDFs</p>
+    <p>Step 2: Write your prompt for these files</p>
     <textarea rows="3" cols="60" [(ngModel)]="prompt"></textarea>
     <br />
     <button (click)="getAnswer()">Get AI response</button>

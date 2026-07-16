@@ -1,6 +1,7 @@
 namespace DocIntelligenceApi;
 
-// What the Angular app sends: one prompt and a list of files (each with its text).
+// What the Angular app sends: one prompt and a list of files.
+// Each file is sent as base64 text (the raw file bytes), so the backend can OCR it.
 public class AnalyzeRequest
 {
     public string Prompt { get; set; } = "";
@@ -10,5 +11,5 @@ public class AnalyzeRequest
 public class FileInput
 {
     public string Name { get; set; } = "";
-    public string Text { get; set; } = "";
+    public string Base64 { get; set; } = "";
 }

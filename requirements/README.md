@@ -1,7 +1,7 @@
 # Requirements & Setup — EY office laptop (ZIP download, no git)
 
-How to get the code as a **ZIP** (no `git` needed), run it in **VS Code**, and confirm the
-**AI key** and **SQL Server** both work. Everything runs on your machine.
+How to get the code as a **ZIP** (no `git` needed), run it in **VS Code**, and confirm your
+**Azure OCR**, **Azure OpenAI**, and **SQL Server** all work. Everything runs on your machine.
 
 ---
 
@@ -26,37 +26,34 @@ How to get the code as a **ZIP** (no `git` needed), run it in **VS Code**, and c
 > The ZIP contains **source code only** — no `node_modules`, no build output, and **no `.env`**.
 > That's expected. The next steps create the `.env` and install the packages.
 
-## 3. Add your secrets — `backend/.env`
-The app reads all keys and passwords from a file called `backend/.env`. It is **not** in the ZIP,
-so you create it once on this laptop. It is never shared or uploaded.
+## 3. Add your secrets — create `backend/.env`
+The app reads all your keys and passwords from one private file, `backend/.env`. It is **not** in
+the ZIP (secrets are never shared), so you create it once on this laptop.
 
-1. In the VS Code Explorer, open the `backend` folder.
-2. Right-click **`.env.example`** → **Copy**, then right-click the `backend` folder → **Paste**.
-   Rename the copy to exactly **`.env`** (just `.env`, no `.example`).
-   *(Terminal alternative — PowerShell: `cp backend\.env.example backend\.env` · Mac/Linux: `cp backend/.env.example backend/.env`)*
-3. Open **`backend/.env`** and fill in **your EY values**. Use the AI block that matches the key
-   you actually have — **Azure OpenAI** *or* **plain OpenAI** — and set the other provider aside.
-
-**If you have an Azure OpenAI key (typical for EY):**
+1. In the VS Code Explorer, right-click the **`backend`** folder → **New File** → name it exactly
+   **`.env`** (just `.env` — nothing before the dot).
+2. Paste this in, then fill in **your EY values** (the parts in `<...>`):
 ```
+# Azure OpenAI — the AI that answers your prompt
+Azure__Endpoint=https://<your-resource>.openai.azure.com
+Azure__ApiKey=<your-azure-openai-key>
+Azure__Deployment=<your-deployment-name>
+
+# Azure Document Intelligence — the OCR that reads text from your files
+DocumentIntelligence__Endpoint=https://<your-resource>.cognitiveservices.azure.com
+DocumentIntelligence__ApiKey=<your-ocr-key>
+
+# Microsoft SQL Server — where the answers are saved
+ConnectionStrings__SqlServer=Server=<EY-SQL-SERVER>;Database=DocIntelligenceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;
+
+# Leave these two as-is
 Ai__Provider=azure
 UseSqlServer=true
-ConnectionStrings__SqlServer=Server=<EY-SQL-SERVER>;Database=DocIntelligenceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;
-Azure__Endpoint=https://<your-resource>.openai.azure.com
-Azure__ApiKey=<your-azure-key>
-Azure__Deployment=<your-deployment-name>
-Azure__ApiVersion=2024-10-21
 ```
-
-**If instead you have a plain OpenAI key:**
-```
-Ai__Provider=openai
-UseSqlServer=true
-ConnectionStrings__SqlServer=Server=<EY-SQL-SERVER>;Database=DocIntelligenceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;
-OpenAI__ApiKey=<your-openai-key>
-OpenAI__Model=gpt-4o-mini
-```
-> `backend/.env` stays on this laptop and is never committed or shared. Keep the key private.
+> That's **5 values** you paste in: Azure OpenAI (endpoint, key, deployment), Azure OCR
+> (endpoint, key), plus the SQL Server connection string. The two api-versions are handled for you.
+>
+> `backend/.env` stays on this laptop and is **never committed or shared**. Keep the keys private.
 
 ## 4. Run it (two VS Code terminals)
 Open a terminal in VS Code: **Terminal → New Terminal**. Then click the **split** icon (or the
@@ -82,14 +79,15 @@ Go through these four checks in order — they confirm your credentials are corr
 |---|---|---|
 | 1 | **Backend is up** | Terminal 1 shows `Now listening on: http://localhost:5011` with **no** red SQL error. → Your **SQL Server** connection string is correct and the `Documents` table was created. |
 | 2 | **Frontend is up** | http://localhost:4200 shows the **"Document Intelligence Sample Project"** page. |
-| 3 | **AI key works** | On the page: choose a PDF → type a prompt → click **Get AI response** → a real answer appears. → Your **Azure / OpenAI key** and provider are correct. |
+| 3 | **OCR + AI work** | On the page: choose a PDF **or image** → type a prompt → click **Get AI response** → an answer that is actually *about your document* appears. → Azure **OCR** read the text **and** Azure **OpenAI** answered. |
 | 4 | **Data is saved** | In the mssql extension run `SELECT * FROM Documents;` → you see a new row (FileName, Prompt, Answer, CreatedAt). → **SQL Server storage** works end to end. |
 
-**If something fails:**
+**If something fails** (the backend terminal, Terminal 1, prints the exact error):
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Answer shows a **401 / "invalid key"** error | Wrong or expired API key in `backend/.env`. Fix `Azure__ApiKey` (or `OpenAI__ApiKey`) and the provider line. |
+| Answer shows a **401 / "invalid key"** error | Wrong Azure key in `backend/.env` — fix `Azure__ApiKey` (OpenAI) or `DocumentIntelligence__ApiKey` (OCR). Terminal 1 shows which call failed. |
+| Answer **ignores the document** / says it can't see any text | OCR read nothing. Recheck `DocumentIntelligence__Endpoint` and `DocumentIntelligence__ApiKey`, and that the file really has text or a clear image. |
 | Backend **crashes on startup** with a SQL error | Wrong connection string, wrong password, or the EY server isn't reachable from this laptop. Recheck `ConnectionStrings__SqlServer`. |
 | Page says **"Could not reach the backend"** | Terminal 1 (backend) isn't running. Start it, wait for the "Now listening" line, then retry. |
 | Backend error says it **can't create the table** | Your SQL login lacks permission — see section 7 to create the table once. |
