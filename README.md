@@ -51,6 +51,7 @@ src/app/app.ts, src/app/app.html   the whole Angular screen
 - **SQLite** (default): open `backend/documents.db` with the VS Code **"SQLite Viewer"** extension.
 - **SQL Server**: use the VS Code **"SQL Server (mssql)"** extension → `SELECT * FROM Documents;`
 
-## Office laptop (EY SQL Server) + syncing two laptops via GitHub
+## Office laptop (EY SQL Server) + syncing two laptops
 See **[requirements/README.md](requirements/README.md)** — the install list, EY SQL Server setup,
-and the personal↔office `git push` / `git pull` workflow.
+and how to run it there. If `git` is blocked on the office laptop, that guide uses a **ZIP
+download** from GitHub instead of `git clone` / `git pull`.
