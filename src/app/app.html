@@ -1,0 +1,45 @@
+<h1>Document Intelligence Sample Project</h1>
+
+<p>Select service:</p>
+<select [(ngModel)]="service">
+  <option value="">-- Choose a service --</option>
+  <option value="document">Document Intelligence</option>
+</select>
+
+@if (service === 'document') {
+  <h2>Document Intelligence</h2>
+
+  <p>Step 1: Choose one or more PDFs</p>
+  <input type="file" accept="application/pdf" multiple (change)="chooseFiles($event)" />
+
+  @if (files.length > 0) {
+    <p>Loaded files:</p>
+    <ul>
+      @for (f of files; track $index) {
+        <li>{{ f.name }}</li>
+      }
+    </ul>
+
+    <p>Step 2: Write your prompt for these PDFs</p>
+    <textarea rows="3" cols="60" [(ngModel)]="prompt"></textarea>
+    <br />
+    <button (click)="getAnswer()">Get AI response</button>
+  }
+
+  @if (loading) {
+    <p>Please wait...</p>
+  }
+
+  @if (errorMessage) {
+    <p class="error">{{ errorMessage }}</p>
+  }
+
+  @for (r of results; track $index) {
+    <div class="card">
+      <h3>{{ r.fileName }}</h3>
+      <pre>{{ r.answer }}</pre>
+    </div>
+  }
+
+  <p><small>Every result is saved to the database. Open it in a database tool to view the data.</small></p>
+}

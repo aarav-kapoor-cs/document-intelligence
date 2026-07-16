@@ -1,0 +1,10 @@
+# Never commit real secrets
+.env
+
+# The SQLite database file (your saved data)
+documents.db
+documents.db-*
+
+# Build output (recreated by dotnet)
+bin/
+obj/
