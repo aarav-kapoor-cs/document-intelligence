@@ -32,7 +32,7 @@ the ZIP (secrets are never shared), so you create it once on this laptop.
 
 1. In the VS Code Explorer, right-click the **`backend`** folder → **New File** → name it exactly
    **`.env`** (just `.env` — nothing before the dot).
-2. Paste this in, then fill in **your EY values** (the parts in `<...>`):
+2. Paste this in, then fill in **your Azure values** (the parts in `<...>`):
 ```
 # Azure OpenAI — the AI that answers your prompt
 Azure__Endpoint=https://<your-resource>.openai.azure.com
@@ -43,16 +43,25 @@ Azure__Deployment=<your-deployment-name>
 DocumentIntelligence__Endpoint=https://<your-resource>.cognitiveservices.azure.com
 DocumentIntelligence__ApiKey=<your-ocr-key>
 
-# Microsoft SQL Server — where the answers are saved
-ConnectionStrings__SqlServer=Server=<EY-SQL-SERVER>;Database=DocIntelligenceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;
-
-# Leave these two as-is
 Ai__Provider=azure
-UseSqlServer=true
 ```
-> That's **5 values** you paste in: Azure OpenAI (endpoint, key, deployment), Azure OCR
-> (endpoint, key), plus the SQL Server connection string. The two api-versions are handled for you.
+> That's the **5 Azure values** you paste in: OpenAI (endpoint, key, deployment) and OCR
+> (endpoint, key). The api-versions are handled for you.
 >
+> **`Azure__Deployment` is NOT a secret key.** It's just the *name* of your model in Azure OpenAI.
+> Find it in the Azure portal → your Azure OpenAI resource → **Model deployments** (or Azure AI
+> Foundry → **Deployments**) → the **Deployment name** column (e.g. `gpt-4o-mini`). If you don't
+> have one yet, deploy a model there, or ask your EY mentor for the deployment name.
+>
+> **The app saves each result to a local file (`backend/documents.db`) by default — no SQL
+> Server needed.** So it runs with just the Azure values above.
+
+**Optional — save to EY SQL Server instead of the local file.** Once you have the EY SQL details,
+add these **two** lines to `backend/.env` (this is what stores the data in SQL Server):
+```
+UseSqlServer=true
+ConnectionStrings__SqlServer=Server=<EY-SQL-SERVER>;Database=DocIntelligenceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;
+```
 > `backend/.env` stays on this laptop and is **never committed or shared**. Keep the keys private.
 
 ## 4. Run it (two VS Code terminals)
@@ -77,10 +86,10 @@ Go through these four checks in order — they confirm your credentials are corr
 
 | # | Check | What proves it works |
 |---|---|---|
-| 1 | **Backend is up** | Terminal 1 shows `Now listening on: http://localhost:5011` with **no** red SQL error. → Your **SQL Server** connection string is correct and the `Documents` table was created. |
+| 1 | **Backend is up** | Terminal 1 shows `Now listening on: http://localhost:5011` with **no** red error. → The database is ready (a local file by default, or SQL Server if you added those two lines). |
 | 2 | **Frontend is up** | http://localhost:4200 shows the **"Document Intelligence Sample Project"** page. |
 | 3 | **OCR + AI work** | On the page: choose a PDF **or image** → type a prompt → click **Get AI response** → an answer that is actually *about your document* appears. → Azure **OCR** read the text **and** Azure **OpenAI** answered. |
-| 4 | **Data is saved** | In the mssql extension run `SELECT * FROM Documents;` → you see a new row (FileName, Prompt, Answer, CreatedAt). → **SQL Server storage** works end to end. |
+| 4 | **Data is saved** | **Local file (default):** open `backend/documents.db` with the VS Code **"SQLite Viewer"** extension. **SQL Server (if enabled):** run `SELECT * FROM Documents;` in the mssql extension. Either way you see a new row (FileName, Prompt, Answer, CreatedAt). |
 
 **If something fails** (the backend terminal, Terminal 1, prints the exact error):
 
@@ -93,7 +102,11 @@ Go through these four checks in order — they confirm your credentials are corr
 | Backend error says it **can't create the table** | Your SQL login lacks permission — see section 7 to create the table once. |
 | Changed `.env` but nothing changed | Stop the backend (Ctrl+C in Terminal 1) and run `dotnet run` again — `.env` is read at startup. |
 
-## 6. View the data in SQL Server (VS Code mssql extension)
+## 6. View the data
+**Local file (default):** open `backend/documents.db` with the VS Code **"SQLite Viewer"**
+extension, or run `SELECT * FROM Documents;` there.
+
+**SQL Server (only if you added the two `UseSqlServer` lines):**
 1. Click the **SQL Server** icon in the VS Code sidebar → **Add Connection**.
 2. Server = your **EY server**, authentication = **SQL Login**, your username/password,
    Database = `DocIntelligenceDb`, **Trust server certificate = Yes**.

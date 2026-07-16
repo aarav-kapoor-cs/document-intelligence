@@ -27,19 +27,20 @@ Open http://localhost:4200 → **Document Intelligence** → choose a PDF or ima
 
 ## Settings — `backend/.env` (git-ignored)
 All secrets live in one private file, `backend/.env` (never committed). Create it in the `backend`
-folder and fill in your values:
+folder and fill in your 5 Azure values:
 ```
 Azure__Endpoint=...                   # Azure OpenAI
 Azure__ApiKey=...
 Azure__Deployment=...
 DocumentIntelligence__Endpoint=...    # Azure OCR (Document Intelligence)
 DocumentIntelligence__ApiKey=...
-ConnectionStrings__SqlServer=...      # Microsoft SQL Server
 Ai__Provider=azure
-UseSqlServer=true
 ```
-`appsettings.json` only holds safe defaults (mock AI + local SQLite), so the app still starts
-before you add any keys. Full step-by-step: **[requirements/README.md](requirements/README.md)**.
+Results save to a **local file** (`backend/documents.db`) by default — no SQL Server needed.
+To save to **Microsoft SQL Server** instead, add two lines: `UseSqlServer=true` and
+`ConnectionStrings__SqlServer=...`. `appsettings.json` holds only safe defaults (mock AI + local
+SQLite), so the app starts even before you add any keys.
+Full step-by-step: **[requirements/README.md](requirements/README.md)**.
 
 ## Where the code is
 ```
