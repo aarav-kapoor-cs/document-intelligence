@@ -62,7 +62,13 @@ public class AiService
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
         var response = await _http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            string error = await response.Content.ReadAsStringAsync();
+            throw new Exception($"Azure OpenAI returned {(int)response.StatusCode}. " +
+                "Check Azure__Endpoint, Azure__ApiKey, and Azure__Deployment in backend/.env. " +
+                "Azure said: " + error);
+        }
 
         string json = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(json);

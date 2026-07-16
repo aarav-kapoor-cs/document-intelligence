@@ -26,18 +26,31 @@ public class AnalyzeController : ControllerBase
 
         foreach (FileInput file in request.Files)
         {
-            // 1. Turn the base64 text back into the real file bytes.
-            byte[] fileBytes = Convert.FromBase64String(file.Base64);
+            string documentText = "";
+            string answer;
 
-            // 2. Read the text out of the file using Azure OCR.
-            string documentText = await _ocr.ReadTextAsync(fileBytes);
+            try
+            {
+                // 1. Turn the base64 text back into the real file bytes.
+                byte[] fileBytes = Convert.FromBase64String(file.Base64);
 
-            // 3. Ask the AI the prompt about that text.
-            AnalyzeResult result = await _ai.AnalyzeAsync(file.Name, request.Prompt, documentText);
-            results.Add(result);
+                // 2. Read the text out of the file using Azure OCR.
+                documentText = await _ocr.ReadTextAsync(fileBytes);
 
-            // 4. Save everything to the database.
-            _db.Save(file.Name, request.Prompt, documentText, result.Answer);
+                // 3. Ask the AI the prompt about that text.
+                AnalyzeResult result = await _ai.AnalyzeAsync(file.Name, request.Prompt, documentText);
+                answer = result.Answer;
+            }
+            catch (Exception ex)
+            {
+                // If OCR or the AI failed (e.g. a wrong key), show the reason instead of crashing.
+                answer = "ERROR: " + ex.Message;
+            }
+
+            results.Add(new AnalyzeResult { FileName = file.Name, Answer = answer });
+
+            // 4. Save everything to the database (the answer, or the error message).
+            _db.Save(file.Name, request.Prompt, documentText, answer);
         }
 
         return Ok(new { results });

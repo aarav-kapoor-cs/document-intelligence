@@ -41,7 +41,13 @@ public class OcrService
         startRequest.Content = new StringContent(startBody, Encoding.UTF8, "application/json");
 
         var startResponse = await _http.SendAsync(startRequest);
-        startResponse.EnsureSuccessStatusCode();
+        if (!startResponse.IsSuccessStatusCode)
+        {
+            string error = await startResponse.Content.ReadAsStringAsync();
+            throw new Exception($"Azure OCR returned {(int)startResponse.StatusCode}. " +
+                "Check DocumentIntelligence__Endpoint and DocumentIntelligence__ApiKey in backend/.env. " +
+                "Azure said: " + error);
+        }
 
         // Azure does not answer right away. It gives us a link to keep checking.
         string resultUrl = startResponse.Headers.GetValues("Operation-Location").First();
