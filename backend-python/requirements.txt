@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+azure-ai-documentintelligence
+openai
+python-dotenv
+pyodbc

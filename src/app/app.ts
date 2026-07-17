@@ -2,8 +2,8 @@ import { Component, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 
-// Address of the .NET backend. Change this if your backend runs on a different port.
-const backendUrl = 'http://localhost:5011';
+// Address of the Python (FastAPI) backend. (The .NET backend is on 5011 if you switch back.)
+const backendUrl = 'http://localhost:8000';
 
 @Component({
   selector: 'app-root',
@@ -12,9 +12,26 @@ const backendUrl = 'http://localhost:5011';
 })
 export class App {
   service = ''; // which service is chosen in the dropdown
+
+  // The Document Intelligence models you can choose from.
+  models = [
+    { id: 'prebuilt-read', label: 'Read (OCR text)' },
+    { id: 'prebuilt-layout', label: 'Layout (text + tables + key-value pairs)' },
+    { id: 'prebuilt-invoice', label: 'Invoice' },
+    { id: 'prebuilt-receipt', label: 'Receipt' },
+    { id: 'prebuilt-idDocument', label: 'ID Document' },
+  ];
+  model = 'prebuilt-layout'; // which model is chosen
+
   files: { name: string; base64: string }[] = []; // the files the user picked
   prompt = ''; // the prompt the user types
-  results: { fileName: string; answer: string }[] = []; // answers from the backend
+  results: {
+    fileName: string;
+    text: string;
+    keyValues: { key: string; value: string; confidence: number }[];
+    answer: string;
+    tokens: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
+  }[] = [];
   loading = false;
   errorMessage = '';
 
@@ -23,8 +40,12 @@ export class App {
     private cd: ChangeDetectorRef,
   ) {}
 
-  // Step 1: read each chosen file and keep it as base64 text (so we can send it as JSON).
-  // The backend reads the text out of the file with Azure OCR.
+  // Turn a confidence (0.0 - 1.0) into a whole-number percent for display.
+  pct(confidence: number) {
+    return Math.round(confidence * 100);
+  }
+
+  // Step 2: read each chosen file and keep it as base64 text (so we can send it as JSON).
   async chooseFiles(event: any) {
     const chosen = event.target.files;
     this.files = [];
@@ -50,23 +71,41 @@ export class App {
     });
   }
 
-  // Step 2: send the prompt and files to the backend. The backend reads the text with
-  // Azure OCR, asks the AI, saves it to the database, and returns the answers.
+  // Step 3: send the model, prompt, and files to the backend. It reads the files with the
+  // chosen Document Intelligence model, asks the AI, saves it, and returns the results.
   getAnswer() {
     this.loading = true;
     this.errorMessage = '';
     this.results = [];
 
-    const body = { prompt: this.prompt, files: this.files };
+    const body = { model: this.model, prompt: this.prompt, files: this.files };
     this.http.post(backendUrl + '/api/analyze', body).subscribe({
       next: (res: any) => {
-        this.results = res.results;
+        // The FastAPI response uses snake_case names, so map them to our shape.
+        this.results = (res.results || []).map((r: any) => ({
+          fileName: r.file_name,
+          text: r.text,
+          keyValues: (r.key_values || []).map((kv: any) => ({
+            key: kv.key,
+            value: kv.value,
+            confidence: kv.confidence,
+          })),
+          answer: r.answer,
+          tokens: r.tokens
+            ? {
+                promptTokens: r.tokens.prompt_tokens,
+                completionTokens: r.tokens.completion_tokens,
+                totalTokens: r.tokens.total_tokens,
+              }
+            : null,
+        }));
         this.loading = false;
         this.cd.detectChanges();
       },
       error: () => {
         this.loading = false;
-        this.errorMessage = 'Could not reach the backend. Make sure it is running (cd backend, then dotnet run).';
+        this.errorMessage =
+          'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8000).';
         this.cd.detectChanges();
       },
     });

@@ -9,7 +9,14 @@
 @if (service === 'document') {
   <h2>Document Intelligence</h2>
 
-  <p>Step 1: Choose one or more PDFs or images</p>
+  <p>Step 1: Choose the document type</p>
+  <select [(ngModel)]="model">
+    @for (m of models; track m.id) {
+      <option [value]="m.id">{{ m.label }}</option>
+    }
+  </select>
+
+  <p>Step 2: Choose one or more PDFs or images</p>
   <input type="file" accept="application/pdf,image/*" multiple (change)="chooseFiles($event)" />
 
   @if (files.length > 0) {
@@ -20,7 +27,7 @@
       }
     </ul>
 
-    <p>Step 2: Write your prompt for these files</p>
+    <p>Step 3: (optional) Write a prompt for the AI</p>
     <textarea rows="3" cols="60" [(ngModel)]="prompt"></textarea>
     <br />
     <button (click)="getAnswer()">Get AI response</button>
@@ -37,9 +44,45 @@
   @for (r of results; track $index) {
     <div class="card">
       <h3>{{ r.fileName }}</h3>
-      <pre>{{ r.answer }}</pre>
+
+      @if (r.keyValues.length > 0) {
+        <p><b>Key-value pairs (with confidence):</b></p>
+        <table class="kv">
+          <tr>
+            <th>Key</th>
+            <th>Value</th>
+            <th>Confidence</th>
+          </tr>
+          @for (kv of r.keyValues; track $index) {
+            <tr>
+              <td>{{ kv.key }}</td>
+              <td>{{ kv.value }}</td>
+              <td>{{ pct(kv.confidence) }}%</td>
+            </tr>
+          }
+        </table>
+      }
+
+      @if (r.answer) {
+        <p><b>AI answer:</b></p>
+        <pre>{{ r.answer }}</pre>
+      }
+
+      @if (r.tokens) {
+        <p>
+          <b>Tokens</b> — input: {{ r.tokens.promptTokens }}, output:
+          {{ r.tokens.completionTokens }}, total: {{ r.tokens.totalTokens }}
+        </p>
+      }
+
+      @if (r.text) {
+        <details>
+          <summary>Full document text</summary>
+          <pre>{{ r.text }}</pre>
+        </details>
+      }
     </div>
   }
 
-  <p><small>Every result is saved to the database. Open it in a database tool to view the data.</small></p>
+  <p><small>Every result is saved to the database.</small></p>
 }

@@ -47,12 +47,18 @@ Thumbs.db
 **/bin/
 **/obj/
 
-# Secrets & local data — NEVER commit these (.env.example is kept as a template)
+# Secrets & local data — NEVER commit these
 .env
 **/.env
 **/*.db
 **/*.db-shm
 **/*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
 
 # Claude Code local settings (personal, not shared)
 .claude/settings.local.json

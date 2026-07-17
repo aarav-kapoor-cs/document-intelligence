@@ -63,6 +63,31 @@ pre {
   color: #b00020;
 }
 
+/* Key-value pairs table inside a result card. */
+table.kv {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+table.kv th,
+table.kv td {
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  text-align: left;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+table.kv th {
+  background: #f0f4f8;
+}
+
+details summary {
+  cursor: pointer;
+  color: #1a4d8f;
+}
+
 hr {
   margin: 32px 0;
   border: none;
