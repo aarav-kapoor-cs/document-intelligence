@@ -4,59 +4,64 @@ Upload one or more PDFs or images, type a prompt, and get an AI answer for each 
 read by Azure OCR, answered by Azure OpenAI, and every result is saved to a database.
 
 - **Frontend** — Angular (http://localhost:4200)
-- **Backend** — ASP.NET Core Web API, .NET 10 (http://localhost:5011)
-- **OCR** — **Azure AI Document Intelligence** (`prebuilt-read`) reads the text from each file.
-- **AI** — **Azure OpenAI** answers the prompt (or `mock` for a fake answer with no key).
-- **Database** — plain SQL. A local **SQLite** file by default, or **Microsoft SQL Server**.
+- **Backend** — Python, FastAPI (http://localhost:8000) — see [backend-python/](backend-python/)
+- **OCR** — **Azure AI Document Intelligence** reads the text (+ key-value pairs) from each file.
+- **AI** — **Azure OpenAI** answers the prompt and reports the token counts.
+- **Database** — plain SQL. **Microsoft SQL Server** on the office laptop, or a local **SQLite** file.
+
+> An older ASP.NET Core backend also lives in `backend/`. It is kept for reference but the app no
+> longer uses it — the Angular app calls the **Python** backend on port **8000**.
 
 ## Quick start (this laptop)
 Two terminals:
 
-**Backend**
+**Backend** (needs Python 3.10+)
 ```bash
-cd backend
-dotnet run       # http://localhost:5011
+cd backend-python
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env               # then fill in your Azure keys (Windows: copy .env.example .env)
+uvicorn main:app --port 8000
 ```
 **Frontend**
 ```bash
 npm install      # first time only
 npm start        # http://localhost:4200
 ```
-Open http://localhost:4200 → **Document Intelligence** → choose a PDF or image → type a prompt →
-**Get AI response**.
+Open http://localhost:4200 → choose a PDF or image → type a prompt → **Get AI response**.
 
-## Settings — `backend/.env` (git-ignored)
-All secrets live in one private file, `backend/.env` (never committed). Create it in the `backend`
-folder and fill in your 5 Azure values:
+## Settings — `backend-python/.env` (git-ignored)
+All secrets live in one private file, `backend-python/.env` (never committed, never in the ZIP).
+Create it by copying the template — `cp .env.example .env` — then fill in your 5 Azure values:
 ```
-Azure__Endpoint=...                   # Azure OpenAI
-Azure__ApiKey=...
-Azure__Deployment=...
-DocumentIntelligence__Endpoint=...    # Azure OCR (Document Intelligence)
-DocumentIntelligence__ApiKey=...
-Ai__Provider=azure
+AZURE_OPENAI_ENDPOINT=...          # Azure OpenAI
+AZURE_OPENAI_KEY=...
+AZURE_OPENAI_DEPLOYMENT=...
+DOC_INTELLIGENCE_ENDPOINT=...      # Azure OCR (Document Intelligence)
+DOC_INTELLIGENCE_KEY=...
 ```
-Results save to a **local file** (`backend/documents.db`) by default — no SQL Server needed.
-To save to **Microsoft SQL Server** instead, add two lines: `UseSqlServer=true` and
-`ConnectionStrings__SqlServer=...`. `appsettings.json` holds only safe defaults (mock AI + local
-SQLite), so the app starts even before you add any keys.
-Full step-by-step: **[requirements/README.md](requirements/README.md)**.
+The template is set up to save to **Microsoft SQL Server** (`USE_SQL_SERVER=true`). To save to a
+**local file** instead (no SQL Server needed), set `USE_SQL_SERVER=false`.
+Full step-by-step: **[requirements/README.md](requirements/README.md)** and
+**[backend-python/README.md](backend-python/README.md)**.
 
 ## Where the code is
 ```
-backend/
-  Program.cs                       startup (database, CORS, port)
-  Controllers/AnalyzeController.cs  POST /api/analyze, GET /api/analyses
-  Services/OcrService.cs           reads file text via Azure Document Intelligence (OCR)
-  Services/AiService.cs            calls mock / Azure OpenAI
-  Data/Database.cs                 plain SQL: CREATE TABLE / INSERT / SELECT
-  Models/                          request, result, and DB-row classes
+backend-python/
+  main.py            FastAPI app + routes: /api/models, /api/analyze, /api/analyses
+  ocr_service.py     reads file text + key-value pairs via Azure Document Intelligence
+  ai_service.py      calls Azure OpenAI and returns the answer + token counts
+  database.py        plain SQL: CREATE TABLE / INSERT / SELECT (SQL Server or SQLite)
+  models.py          Pydantic request/response shapes
 src/app/app.ts, src/app/app.html   the whole Angular screen
 ```
 
 ## View the saved data
-- **SQLite** (default): open `backend/documents.db` with the VS Code **"SQLite Viewer"** extension.
-- **SQL Server**: use the VS Code **"SQL Server (mssql)"** extension → `SELECT * FROM Documents;`
+- **SQL Server** (office laptop): use SSMS or the VS Code **"SQL Server (mssql)"** extension →
+  `SELECT * FROM Documents;`
+- **SQLite** (when `USE_SQL_SERVER=false`): open `backend-python/documents.db` with the VS Code
+  **"SQLite Viewer"** extension.
 
 ## Office laptop (EY SQL Server) + syncing two laptops
 See **[requirements/README.md](requirements/README.md)** — the install list, EY SQL Server setup,

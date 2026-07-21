@@ -1,6 +1,8 @@
-fastapi
-uvicorn[standard]
-azure-ai-documentintelligence
-openai
-python-dotenv
-pyodbc
+# Python 3.10 or newer is required.
+# Versions are pinned so the office laptop installs exactly what works here.
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+azure-ai-documentintelligence==1.0.2
+openai==2.46.0
+python-dotenv==1.2.2
+pyodbc==5.3.0

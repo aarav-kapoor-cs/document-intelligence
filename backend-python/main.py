@@ -35,8 +35,14 @@ MODELS = [
     {"id": "prebuilt-idDocument", "label": "ID Document"},
 ]
 
-# Make the database table when the app starts.
-database.ensure_table()
+# Make the database table when the app starts. If the database can't be reached
+# yet (e.g. SQL Server isn't running or the connection string is wrong), don't
+# crash — print a clear note and keep running so /api/models still works and the
+# analyze step can report the exact problem.
+try:
+    database.ensure_table()
+except Exception as ex:
+    print("WARNING: could not prepare the database at startup:", ex)
 
 
 # GET /api/models - the list for the dropdown.
@@ -66,6 +72,26 @@ def analyze(request: AnalyzeRequest):
             # If OCR or the AI failed (e.g. a wrong key), show the reason.
             answer_text = "ERROR: " + str(ex)
 
+        # 4. Save everything to the database. If the database can't be reached
+        # (e.g. SQL Server isn't running or the connection string is wrong),
+        # show that clearly instead of failing the whole request.
+        try:
+            database.save(
+                file.name,
+                request.model,
+                request.prompt,
+                text,
+                json.dumps([kv.model_dump() for kv in key_values]),
+                answer_text,
+                tokens.prompt_tokens if tokens else 0,
+                tokens.completion_tokens if tokens else 0,
+                tokens.total_tokens if tokens else 0,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        except Exception as ex:
+            answer_text = (answer_text + "\n\n" if answer_text else "") + \
+                "ERROR saving to the database: " + str(ex)
+
         results.append(FileResult(
             file_name=file.name,
             model=request.model,
@@ -74,20 +100,6 @@ def analyze(request: AnalyzeRequest):
             answer=answer_text,
             tokens=tokens,
         ))
-
-        # 4. Save everything to the database.
-        database.save(
-            file.name,
-            request.model,
-            request.prompt,
-            text,
-            json.dumps([kv.model_dump() for kv in key_values]),
-            answer_text,
-            tokens.prompt_tokens if tokens else 0,
-            tokens.completion_tokens if tokens else 0,
-            tokens.total_tokens if tokens else 0,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-        )
 
     return AnalyzeResponse(results=results)
 
