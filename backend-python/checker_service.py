@@ -9,9 +9,6 @@ from typing import Optional, Tuple
 
 from openai import AzureOpenAI
 
-# Fixed here so the .env only needs endpoint, key, and deployment name.
-_API_VERSION = "2024-10-21"
-
 # The document type each Document Intelligence model expects.
 # "Layout" is general-purpose, so it maps to the "general_document" type.
 MODEL_EXPECTED_TYPE = {
@@ -53,7 +50,10 @@ def classify(document_text: str) -> Optional[str]:
         return None
 
     print("CHECKER: calling Azure OpenAI to classify the document...")
-    client = AzureOpenAI(azure_endpoint=endpoint, api_key=key, api_version=_API_VERSION)
+    # The Azure OpenAI Python SDK needs a version string; default it via the SDK's
+    # own env var so you only ever set endpoint, key, and deployment.
+    os.environ.setdefault("OPENAI_API_VERSION", "2024-10-21")
+    client = AzureOpenAI(azure_endpoint=endpoint, api_key=key)
     response = client.chat.completions.create(
         model=deployment,
         messages=[
@@ -62,9 +62,14 @@ def classify(document_text: str) -> Optional[str]:
         ],
     )
 
-    detected = (response.choices[0].message.content or "").strip().lower()
-    print("CHECKER: detected document type =", detected)
-    return detected if detected in VALID_TYPES else "general_document"
+    raw = (response.choices[0].message.content or "").strip().lower()
+    # The model should reply with one category word, but be forgiving if it adds
+    # punctuation or wraps it in a short sentence.
+    detected = raw if raw in VALID_TYPES else next(
+        (category for category in VALID_TYPES if category in raw), "general_document"
+    )
+    print("CHECKER: detected document type =", detected, "(raw reply:", repr(raw) + ")")
+    return detected
 
 
 def check(model_id: str, document_text: str) -> Tuple[bool, str]:
@@ -77,7 +82,7 @@ def check(model_id: str, document_text: str) -> Tuple[bool, str]:
     if detected is None:
         return True, ""
 
-    expected = MODEL_EXPECTED_TYPE.get(model_id, "general")
+    expected = MODEL_EXPECTED_TYPE.get(model_id, "general_document")
     if detected == expected:
         print("CHECKER: OK - document matches the '" + expected + "' model.")
         return True, ""

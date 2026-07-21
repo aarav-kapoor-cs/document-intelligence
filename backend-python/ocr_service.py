@@ -31,6 +31,15 @@ def _leaf_value(field):
             symbol = getattr(currency, "currency_symbol", "") or getattr(currency, "currency_code", "") or ""
             return (str(symbol) + str(amount)).strip()
 
+    if getattr(field, "type", None) == "address":
+        address = getattr(field, "value_address", None)
+        if address is not None:
+            parts = [getattr(address, part, None) for part in
+                     ("street_address", "city", "state", "postal_code", "country_region")]
+            joined = ", ".join(str(part) for part in parts if part)
+            if joined:
+                return joined
+
     for attr in ("value_string", "value_number", "value_integer", "value_date",
                  "value_time", "value_phone_number", "value_boolean",
                  "value_country_region", "value_selection_mark"):
@@ -109,8 +118,11 @@ def analyze(model_id, file_bytes):
 
     # Layout returns general key-value pairs (already a flat list).
     for pair in (result.key_value_pairs or []):
-        pair_key = pair.key.content if pair.key else ""
-        pair_value = pair.value.content if pair.value else ""
+        pair_key = ((pair.key.content if pair.key else "") or "").strip()
+        pair_value = ((pair.value.content if pair.value else "") or "").strip()
+        # Skip blank rows so every displayed row is a real key -> value.
+        if not pair_value:
+            continue
         confidence = float(getattr(pair, "confidence", None) or 0.0)
         key_values.append(KeyValue(key=pair_key, value=pair_value, confidence=confidence))
 
