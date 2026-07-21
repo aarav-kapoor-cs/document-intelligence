@@ -43,10 +43,6 @@ __screenshots__/
 .DS_Store
 Thumbs.db
 
-# Backend (.NET) build output
-**/bin/
-**/obj/
-
 # Secrets & local data — NEVER commit these
 .env
 **/.env

@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import database
 import ocr_service
 import ai_service
+import checker_service
 from models import AnalyzeRequest, AnalyzeResponse, FileResult
 
 app = FastAPI()
@@ -26,81 +27,86 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The Document Intelligence models the dropdown can choose from.
-MODELS = [
-    {"id": "prebuilt-read", "label": "Read (OCR text)"},
-    {"id": "prebuilt-layout", "label": "Layout (text + tables + key-value pairs)"},
-    {"id": "prebuilt-invoice", "label": "Invoice"},
-    {"id": "prebuilt-receipt", "label": "Receipt"},
-    {"id": "prebuilt-idDocument", "label": "ID Document"},
-]
-
-# Make the database table when the app starts. If the database can't be reached
-# yet (e.g. SQL Server isn't running or the connection string is wrong), don't
-# crash — print a clear note and keep running so /api/models still works and the
-# analyze step can report the exact problem.
+# Create the database table on startup. If the database can't be reached yet
+# (e.g. SQL Server is down or the connection string is wrong), log it and keep
+# running so the API still works and each request can report the exact problem.
 try:
     database.ensure_table()
 except Exception as ex:
     print("WARNING: could not prepare the database at startup:", ex)
 
 
-# GET /api/models - the list for the dropdown.
-@app.get("/api/models")
-def get_models():
-    return MODELS
+def _save(file_name, model, prompt, text, key_values, answer, tokens):
+    """Insert one result row into the database."""
+    print("DATABASE: saving the result for", file_name, "...")
+    database.save(
+        file_name,
+        model,
+        prompt,
+        text,
+        json.dumps([kv.model_dump() for kv in key_values]),
+        answer,
+        tokens.prompt_tokens if tokens else 0,
+        tokens.completion_tokens if tokens else 0,
+        tokens.total_tokens if tokens else 0,
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    print("DATABASE: saved.")
 
 
-# POST /api/analyze - read each file, ask the AI, save it, return the answers.
+def _process_file(file, model, prompt):
+    """Run one file through OCR, the type checker, the AI, and the database."""
+    print("PROCESSING FILE:", file.name, "| model:", model)
+
+    text = ""
+    key_values = []
+    answer = ""
+    tokens = None
+
+    try:
+        file_bytes = base64.b64decode(file.base64)
+        text, key_values = ocr_service.analyze(model, file_bytes)
+
+        # Confirm the file matches the chosen document type before going further.
+        matches, message = checker_service.check(model, text)
+        if not matches:
+            # Wrong type: stop here - no AI answer, and nothing is saved.
+            return FileResult(
+                file_name=file.name,
+                model=model,
+                text=text,
+                key_values=key_values,
+                answer="ERROR: " + message,
+            )
+
+        answer, tokens = ai_service.answer(prompt, text)
+    except Exception as ex:
+        # OCR or the AI failed (e.g. a wrong key). Report the reason.
+        print("ERROR while processing", file.name, "-", ex)
+        answer = "ERROR: " + str(ex)
+
+    # Save the result. A database problem is reported but never loses the answer.
+    try:
+        _save(file.name, model, prompt, text, key_values, answer, tokens)
+    except Exception as ex:
+        print("ERROR saving to the database:", ex)
+        answer = (answer + "\n\n" if answer else "") + "ERROR saving to the database: " + str(ex)
+
+    return FileResult(
+        file_name=file.name,
+        model=model,
+        text=text,
+        key_values=key_values,
+        answer=answer,
+        tokens=tokens,
+    )
+
+
+# POST /api/analyze - read each file, check its type, ask the AI, and save it.
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 def analyze(request: AnalyzeRequest):
-    results = []
-    for file in request.files:
-        text = ""
-        key_values = []
-        answer_text = ""
-        tokens = None
-
-        try:
-            # 1. Turn the base64 text back into the real file bytes.
-            file_bytes = base64.b64decode(file.base64)
-            # 2. Read the file with the chosen Document Intelligence model.
-            text, key_values = ocr_service.analyze(request.model, file_bytes)
-            # 3. If a prompt was given, ask the AI (and get the token counts).
-            answer_text, tokens = ai_service.answer(request.prompt, text)
-        except Exception as ex:
-            # If OCR or the AI failed (e.g. a wrong key), show the reason.
-            answer_text = "ERROR: " + str(ex)
-
-        # 4. Save everything to the database. If the database can't be reached
-        # (e.g. SQL Server isn't running or the connection string is wrong),
-        # show that clearly instead of failing the whole request.
-        try:
-            database.save(
-                file.name,
-                request.model,
-                request.prompt,
-                text,
-                json.dumps([kv.model_dump() for kv in key_values]),
-                answer_text,
-                tokens.prompt_tokens if tokens else 0,
-                tokens.completion_tokens if tokens else 0,
-                tokens.total_tokens if tokens else 0,
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            )
-        except Exception as ex:
-            answer_text = (answer_text + "\n\n" if answer_text else "") + \
-                "ERROR saving to the database: " + str(ex)
-
-        results.append(FileResult(
-            file_name=file.name,
-            model=request.model,
-            text=text,
-            key_values=key_values,
-            answer=answer_text,
-            tokens=tokens,
-        ))
-
+    results = [_process_file(file, request.model, request.prompt) for file in request.files]
+    print("DONE - returning", len(results), "result(s).")
     return AnalyzeResponse(results=results)
 
 

@@ -17,8 +17,10 @@ def answer(prompt, document_text):
 
     # No prompt, or AI not set up yet -> skip the AI step.
     if not prompt or not endpoint.startswith("http"):
+        print("AI: skipped (no prompt or Azure OpenAI not configured).")
         return "", None
 
+    print("AI: calling Azure OpenAI to answer the prompt...")
     client = AzureOpenAI(azure_endpoint=endpoint, api_key=key, api_version=api_version)
     response = client.chat.completions.create(
         model=deployment,
@@ -29,6 +31,7 @@ def answer(prompt, document_text):
     )
 
     answer_text = response.choices[0].message.content or ""
+    print("AI: done -", response.usage.total_tokens, "tokens used.")
     tokens = TokenUsage(
         prompt_tokens=response.usage.prompt_tokens,       # input tokens
         completion_tokens=response.usage.completion_tokens,  # output tokens

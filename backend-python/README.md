@@ -5,9 +5,6 @@ Intelligence** model (Read / Layout / Invoice / Receipt / ID Document); it extra
 **key-value pairs with confidence scores**, optionally asks **Azure OpenAI** your prompt (and counts
 the input/output **tokens**), and saves everything to a database.
 
-> There is also an older `.NET` backend in `backend/`. It stays in the repo but is **not** used by
-> the app anymore — everything below is what you run.
-
 ## Run it (needs **Python 3.10 or newer**)
 ```bash
 cd backend-python

@@ -9,9 +9,6 @@ read by Azure OCR, answered by Azure OpenAI, and every result is saved to a data
 - **AI** — **Azure OpenAI** answers the prompt and reports the token counts.
 - **Database** — plain SQL. **Microsoft SQL Server** on the office laptop, or a local **SQLite** file.
 
-> An older ASP.NET Core backend also lives in `backend/`. It is kept for reference but the app no
-> longer uses it — the Angular app calls the **Python** backend on port **8000**.
-
 ## Quick start (this laptop)
 Two terminals:
 

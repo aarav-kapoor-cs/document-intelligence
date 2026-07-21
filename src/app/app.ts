@@ -2,7 +2,7 @@ import { Component, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 
-// Address of the Python (FastAPI) backend. (The .NET backend is on 5011 if you switch back.)
+// Address of the Python (FastAPI) backend.
 const backendUrl = 'http://localhost:8000';
 
 @Component({
@@ -15,7 +15,6 @@ export class App {
 
   // The Document Intelligence models you can choose from.
   models = [
-    { id: 'prebuilt-read', label: 'Read (OCR text)' },
     { id: 'prebuilt-layout', label: 'Layout (text + tables + key-value pairs)' },
     { id: 'prebuilt-invoice', label: 'Invoice' },
     { id: 'prebuilt-receipt', label: 'Receipt' },
