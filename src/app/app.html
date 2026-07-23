@@ -4,6 +4,7 @@
 <select [(ngModel)]="service">
   <option value="">-- Choose a service --</option>
   <option value="document">Document Intelligence</option>
+  <option value="excel">Excel report</option>
 </select>
 
 @if (service === 'document') {
@@ -45,22 +46,68 @@
     <div class="card">
       <h3>{{ r.fileName }}</h3>
 
-      @if (r.keyValues.length > 0) {
-        <p><b>Key-value pairs (with confidence):</b></p>
-        <table class="kv">
-          <tr>
-            <th>Key</th>
-            <th>Value</th>
-            <th>Confidence</th>
-          </tr>
-          @for (kv of r.keyValues; track $index) {
-            <tr>
-              <td>{{ kv.key }}</td>
-              <td>{{ kv.value }}</td>
-              <td>{{ pct(kv.confidence) }}%</td>
-            </tr>
-          }
-        </table>
+      @if (r.error) {
+        <p class="error">{{ r.error }}</p>
+      }
+
+      @if (fieldList(r.fields).length > 0) {
+        <details open>
+          <summary>Extracted fields</summary>
+          <div class="table-wrap">
+            <table class="fields-table">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Value</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (f of fieldList(r.fields); track f.name) {
+                  <tr [class.low-confidence]="isLowConfidence(f.confidence)">
+                    <td>{{ f.name }}</td>
+                    <td>
+                      @if (isItemList(f.value)) {
+                        <!-- Line items (e.g. invoice rows) get their own small table. -->
+                        <table class="items-table">
+                          <thead>
+                            <tr>
+                              @for (col of itemColumns(f.value); track col) {
+                                <th>{{ col }}</th>
+                              }
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (item of f.value; track $index) {
+                              <tr>
+                                @for (col of itemColumns(f.value); track col) {
+                                  <!-- Each cell shows its own value + confidence from Azure. -->
+                                  <td [class.low-confidence-cell]="isLowConfidence(cell(item, col)?.confidence ?? null)">
+                                    @if (cell(item, col); as c) {
+                                      {{ fieldText(c.value) }}
+                                      @if (c.confidence != null) {
+                                        <small>{{ confidencePercent(c.confidence) }}</small>
+                                      }
+                                    } @else {
+                                      —
+                                    }
+                                  </td>
+                                }
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      } @else {
+                        {{ fieldText(f.value) }}
+                      }
+                    </td>
+                    <td>{{ confidencePercent(f.confidence) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </details>
       }
 
       @if (r.answer) {
@@ -84,5 +131,33 @@
     </div>
   }
 
-  <p><small>Every result is saved to the database.</small></p>
+  <p><small>Successful results are saved to the database (each field with its value and confidence as JSON). Fields under 80% confidence are highlighted.</small></p>
+}
+
+@if (service === 'excel') {
+  <h2>Excel report</h2>
+
+  <p>Step 1: Choose the date range (which days of saved results to include)</p>
+  From: <input type="date" [(ngModel)]="exportFromDate" />
+  To: <input type="date" [(ngModel)]="exportToDate" />
+
+  <p>Step 2: Choose which type of document to fetch</p>
+  <select [(ngModel)]="exportDocType">
+    @for (t of exportTypes; track t.id) {
+      <option [value]="t.id">{{ t.label }}</option>
+    }
+  </select>
+
+  <p>Step 3: Download the audit workbook (6 sheets, same layout as the audit template)</p>
+  <button (click)="downloadExcel()" [disabled]="exportLoading">Download Excel report</button>
+
+  @if (exportLoading) {
+    <p>Please wait...</p>
+  }
+  @if (exportError) {
+    <p class="error">{{ exportError }}</p>
+  }
+  @if (exportMessage) {
+    <p><b>{{ exportMessage }}</b></p>
+  }
 }

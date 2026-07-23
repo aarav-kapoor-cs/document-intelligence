@@ -63,29 +63,81 @@ pre {
   color: #b00020;
 }
 
-/* Key-value pairs table inside a result card. */
-table.kv {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 8px 0;
-}
-
-table.kv th,
-table.kv td {
-  border: 1px solid #ccc;
-  padding: 4px 8px;
-  text-align: left;
-  font-size: 14px;
-  vertical-align: top;
-}
-
-table.kv th {
-  background: #f0f4f8;
-}
-
 details summary {
   cursor: pointer;
   color: #1a4d8f;
+}
+
+/* Extracted fields table (wide line-item tables scroll inside the card). */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.fields-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  background: #fff;
+  font-size: 14px;
+}
+
+.fields-table th,
+.fields-table td {
+  border: 1px solid #eee;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.fields-table th {
+  background: #f0f4fa;
+  color: #1a4d8f;
+}
+
+/* Smaller table nested inside a field's value, e.g. invoice line items. */
+.items-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.items-table th,
+.items-table td {
+  border: 1px solid #eee;
+  padding: 4px 8px;
+  text-align: left;
+  background: #fff;
+}
+
+.items-table th {
+  background: #f7f7f7;
+  color: #555;
+}
+
+/* The confidence percentage shown under each line-item value. */
+.items-table td small {
+  display: block;
+  color: #999;
+  margin-left: 0;
+}
+
+/* Fields Azure was less than 80% sure about. */
+.low-confidence > td {
+  background: #fff7e6;
+}
+
+/* One line-item cell Azure was less than 80% sure about. */
+.items-table td.low-confidence-cell {
+  background: #fff7e6;
+}
+
+.items-table td.low-confidence-cell small {
+  color: #b26b00;
+  font-weight: 600;
+}
+
+.low-confidence > td:last-child {
+  color: #b26b00;
+  font-weight: 600;
 }
 
 hr {

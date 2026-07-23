@@ -1,8 +1,15 @@
 # Python 3.10 or newer is required.
 # Versions are pinned so the office laptop installs exactly what works here.
+#
+# Install (from backend-python, with the venv active):
+#   pip install -r requirements.txt
+# If pip fails with an SSL/certificate error on the office network, use:
+#   pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+# If "pip" itself is not recognized, use:  py -m pip install -r requirements.txt
 fastapi==0.139.2
 uvicorn[standard]==0.51.0
 azure-ai-documentintelligence==1.0.2
 openai==2.46.0
 python-dotenv==1.2.2
 pyodbc==5.3.0
+openpyxl==3.1.5

@@ -4,18 +4,18 @@ Classifies a document's extracted text into one of four types and confirms it
 matches the Document Intelligence model the user selected.
 """
 
-import os
 from typing import Optional, Tuple
 
-from openai import AzureOpenAI
+from ai_service import get_client, get_deployment, is_configured
 
-# The document type each Document Intelligence model expects.
-# "Layout" is general-purpose, so it maps to the "general_document" type.
+# The document type each Document Intelligence model expects. Layout only
+# accepts general documents - an invoice, receipt, or ID uploaded under Layout
+# is rejected so the user picks the model made for it.
 MODEL_EXPECTED_TYPE = {
+    "prebuilt-layout": "general_document",
     "prebuilt-invoice": "invoice",
     "prebuilt-receipt": "receipt",
     "prebuilt-idDocument": "identity_document",
-    "prebuilt-layout": "general_document",
 }
 
 VALID_TYPES = ("invoice", "receipt", "identity_document", "general_document")
@@ -40,22 +40,13 @@ _SYSTEM_PROMPT = (
 
 def classify(document_text: str) -> Optional[str]:
     """Return the detected document type, or None if the check cannot run."""
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    key = os.getenv("AZURE_OPENAI_KEY", "")
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
-
-    # Skip the check when Azure OpenAI is not configured or there is no text.
-    if not endpoint.startswith("http") or not document_text:
+    if not is_configured() or not document_text:
         print("CHECKER: skipped (Azure OpenAI not configured or no text).")
         return None
 
     print("CHECKER: calling Azure OpenAI to classify the document...")
-    # The Azure OpenAI Python SDK needs a version string; default it via the SDK's
-    # own env var so you only ever set endpoint, key, and deployment.
-    os.environ.setdefault("OPENAI_API_VERSION", "2024-10-21")
-    client = AzureOpenAI(azure_endpoint=endpoint, api_key=key)
-    response = client.chat.completions.create(
-        model=deployment,
+    response = get_client().chat.completions.create(
+        model=get_deployment(),
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": document_text},
@@ -78,13 +69,13 @@ def check(model_id: str, document_text: str) -> Tuple[bool, str]:
     Returns (True, "") when it matches or cannot be checked, and
     (False, message) when the user selected the wrong document type.
     """
-    detected = classify(document_text)
-    if detected is None:
-        return True, ""
+    expected = MODEL_EXPECTED_TYPE.get(model_id)
+    if expected is None:
+        return True, ""  # Unknown model: nothing to compare against.
 
-    expected = MODEL_EXPECTED_TYPE.get(model_id, "general_document")
-    if detected == expected:
-        print("CHECKER: OK - document matches the '" + expected + "' model.")
+    detected = classify(document_text)
+    if detected is None or detected == expected:
+        print("CHECKER: OK - document accepted for the '" + model_id + "' model.")
         return True, ""
 
     message = (

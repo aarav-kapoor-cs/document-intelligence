@@ -17,13 +17,6 @@ class AnalyzeRequest(BaseModel):
     files: list[FileInput] = []
 
 
-# One key-value pair found in the document, with Azure's confidence (0.0 - 1.0).
-class KeyValue(BaseModel):
-    key: str
-    value: str
-    confidence: float
-
-
 # How many tokens the AI used.
 class TokenUsage(BaseModel):
     prompt_tokens: int
@@ -31,15 +24,25 @@ class TokenUsage(BaseModel):
     total_tokens: int
 
 
-# What we send back for one file.
+# What we send back for one file. `fields` holds the extracted data as
+# structured JSON - it is saved to the database, not shown on screen. `error`
+# is filled in when a step failed (wrong document type, AI not set up, ...).
 class FileResult(BaseModel):
     file_name: str
     model: str
     text: str = ""
-    key_values: list[KeyValue] = []
+    fields: dict = {}
     answer: str = ""
+    error: str = ""
     tokens: TokenUsage | None = None
 
 
 class AnalyzeResponse(BaseModel):
     results: list[FileResult] = []
+
+
+# What the Excel report page sends us: a date window and one document type.
+class ExportRequest(BaseModel):
+    from_date: str = ""  # "YYYY-MM-DD"
+    to_date: str = ""    # "YYYY-MM-DD"
+    doc_type: str = "prebuilt-invoice"
