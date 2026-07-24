@@ -20,7 +20,7 @@ export class App {
     { id: 'prebuilt-receipt', label: 'Receipt' },
     { id: 'prebuilt-idDocument', label: 'ID Document' },
   ];
-  model = 'prebuilt-layout'; // which model is chosen
+  model = 'prebuilt-invoice'; // which model is chosen (same default as the Excel export)
 
   // The document types the Excel report can be built for.
   exportTypes = [

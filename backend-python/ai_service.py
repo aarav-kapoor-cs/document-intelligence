@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 from openai import OpenAI
 
@@ -28,6 +29,7 @@ def get_client():
 
 def get_deployment():
     return os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
+
 
 def _values_only(node):
     """Strip the {"value", "confidence"} wrappers at every level (fields, line
@@ -92,3 +94,89 @@ def answer(prompt, document_text, fields=None):
         total_tokens=response.usage.total_tokens,
     )
     return answer_text, tokens
+
+
+def parse_ai_response_to_json(answer_text: str) -> dict | None:
+    """Try to parse the AI answer into a JSON-like dict.
+
+    1) If the answer is valid JSON, return it.
+    2) Else, look for simple key: value lines and build a dict.
+    Returns None if parsing fails or no pairs found.
+    """
+    if not answer_text:
+        return None
+    # Try direct JSON
+    try:
+        parsed = json.loads(answer_text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    # Fallback: parse lines like "Key: Value"
+    lines = [l.strip() for l in answer_text.splitlines() if l.strip()]
+    kv = {}
+    for line in lines:
+        # Accept separators :, -, =
+        m = re.split(r"\s*[:=\-]\s*", line, maxsplit=1)
+        if len(m) == 2:
+            raw_k, raw_v = m[0].strip(), m[1].strip()
+            # Normalize key: remove non-alphanum, capitalize parts -> CamelCase
+            parts = re.findall(r"[A-Za-z0-9]+", raw_k)
+            if not parts:
+                continue
+            key = "".join(p.capitalize() for p in parts)
+            kv[key] = raw_v
+
+    return kv if kv else None
+
+
+def generate_ai_answer_json(answer_text: str, prompt: str | None = None) -> dict | None:
+    """Generate structured JSON from the AI answer based on the prompt.
+
+    This function calls the AI again to structure the answer as JSON based on
+    what the prompt asks for. For example:
+    - Prompt: "Tell me vendor name, GST and items"
+    - Answer: "The vendor is ABC Corp, GST is 18%, items are Item1, Item2"
+    - Structured JSON: {"vendor_name": "ABC Corp", "gst": "18%", "items": ["Item1", "Item2"]}
+
+    Returns a dict with structured data, or None if structuring fails.
+    """
+    if not answer_text or not prompt:
+        return None
+
+    try:
+        # Ask the AI to structure the answer around what the prompt requested.
+        structure_prompt = f"""Based on this question: "{prompt}"
+
+And this answer: "{answer_text}"
+
+Extract the specific information requested in the question and return it as a JSON object.
+Use keys that match what was asked (convert to snake_case or camelCase).
+If the question asks for multiple items (like 'items', 'products', 'lines'), put them in an array.
+Return ONLY valid JSON, no other text."""
+
+        response = get_client().chat.completions.create(
+            model=get_deployment(),
+            messages=[
+                {"role": "system", "content": "You are a JSON extraction assistant. Return only valid JSON objects."},
+                {"role": "user", "content": structure_prompt},
+            ],
+        )
+
+        json_text = response.choices[0].message.content or ""
+        try:
+            structured = json.loads(json_text)
+            if isinstance(structured, dict):
+                return structured
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: best-effort parsing of the original answer.
+        parsed = parse_ai_response_to_json(answer_text)
+        return parsed if parsed else {"answer": answer_text}
+
+    except Exception as ex:
+        print(f"WARNING: could not structure AI answer to JSON: {ex}")
+        # Last resort: return the raw answer
+        return {"answer": answer_text} if answer_text else None

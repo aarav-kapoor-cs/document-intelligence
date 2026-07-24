@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -19,6 +20,12 @@ import checker_service
 import excel_service
 from models import AnalyzeRequest, AnalyzeResponse, ExportRequest, FileResult
 
+# Show our own INFO logs (the Excel export explains itself with them), but
+# keep the very chatty Azure/HTTP client libraries at warnings only.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+for noisy in ("azure", "httpx", "openai", "urllib3"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+
 app = FastAPI()
 
 # Allow the Angular app (http://localhost:4200) to call this API from the browser.
@@ -34,12 +41,13 @@ app.add_middleware(
 # running so the API still works and each request can report the exact problem.
 try:
     database.ensure_table()
+    print("DATABASE: using", database.describe())
 except Exception as ex:
     print("WARNING: could not prepare the database at startup:", ex)
 
 
-def _save(file_name, model, prompt, text, fields, answer, tokens, prompt_id):
-    """Insert one result row into the database (fields stored as JSON)."""
+def _save(file_name, model, prompt, text, fields, ai_json, answer, tokens, prompt_id):
+    """Insert one result row into the database (fields and AI JSON stored as JSON)."""
     print("DATABASE: saving the result for", file_name, "...")
     database.save(
         file_name,
@@ -47,6 +55,7 @@ def _save(file_name, model, prompt, text, fields, answer, tokens, prompt_id):
         prompt,
         text,
         json.dumps(fields),
+        database.save_ai_answer_json(ai_json),
         answer,
         tokens.prompt_tokens if tokens else 0,
         tokens.completion_tokens if tokens else 0,
@@ -88,20 +97,28 @@ def _process_file(file, model, prompt, prompt_id):
     except Exception as ex:
         return failed("The AI could not answer", ex)
 
+    # Structure the answer as JSON once (best-effort); the same JSON goes into
+    # both the API response and the database, so they always agree.
+    try:
+        ai_json = ai_service.generate_ai_answer_json(answer, prompt)
+    except Exception as ex:
+        print("WARNING: could not structure the AI answer as JSON:", ex)
+        ai_json = None
+
     # Save the result. A database problem is reported but never loses the answer.
     error = ""
     try:
-        _save(file.name, model, prompt, text, fields, answer, tokens, prompt_id)
+        _save(file.name, model, prompt, text, fields, ai_json, answer, tokens, prompt_id)
     except Exception as ex:
         print("ERROR saving to the database:", ex)
         error = "The result could not be saved to the database: " + str(ex)
-
     return FileResult(
         file_name=file.name,
         model=model,
         text=text,
         fields=fields,
         answer=answer,
+        ai_answer_json=ai_json,
         error=error,
         tokens=tokens,
     )
@@ -122,6 +139,17 @@ def analyze(request: AnalyzeRequest):
 @app.get("/api/analyses")
 def get_analyses():
     return database.get_all()
+
+
+# GET /api/health - is the database reachable? ensure_table() is safe to call
+# repeatedly, so this also repairs the schema if the database was down at startup.
+@app.get("/api/health")
+def health():
+    try:
+        database.ensure_table()
+        return {"database": "ok"}
+    except Exception as ex:
+        return {"database": str(ex)}
 
 
 # POST /api/export - build the audit workbook for a date window and one

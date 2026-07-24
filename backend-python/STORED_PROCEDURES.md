@@ -29,6 +29,24 @@ Mac behaves exactly as before.
 exists — safe to run at every startup, same idea as the existing
 `IF OBJECT_ID('Documents', 'U') IS NULL CREATE TABLE ...` line.
 
+## Schema catch-up and autocommit (added with AiAnswerJson)
+
+The table has grown over time (latest addition: `AiAnswerJson NVARCHAR(MAX)`,
+the AI answer structured as JSON). `ensure_table()` therefore runs a block of
+`IF COL_LENGTH('Documents', '...') IS NULL ALTER TABLE ...` guards **before**
+creating the view and procedures — a view that names a missing column fails
+immediately, so the column must exist first. On an older office database this
+block quietly adds whatever is missing on the next startup.
+
+The `ensure_table()` connection also uses `autocommit=True`. With one big
+commit at the end, a single failing statement used to roll back *everything*
+already created — leaving the old procedures in place while the Python code
+expected the new ones (old `SaveDocument` took 11 parameters, the new one
+takes 12 including `@AiAnswerJson`, so every save failed). With autocommit,
+each statement sticks the moment it succeeds. `GET /api/health` re-runs
+`ensure_table()`, so it doubles as a repair button if the database was down
+at startup.
+
 ## Why `GetDocumentsFiltered` takes DATETIME2 parameters
 
 `CreatedAt` is stored as text (`NVARCHAR(40)`, "YYYY-MM-DD HH:MM:SS" in UTC).
@@ -38,6 +56,10 @@ comparison**:
 
 - The parameters are `@FromDate DATETIME2, @ToDate DATETIME2`, and Python
   passes real `datetime` values (pyodbc sends them as dates, not strings).
+  Since 2026-07-24 those values are the requested IST dates **converted to
+  UTC** (`database._window_utc`), because `CreatedAt` is saved in UTC — a
+  document analysed at 01:00 IST is stored under the previous UTC date and
+  would otherwise fall out of a same-day report.
 - The column is converted with `TRY_CAST(CreatedAt AS DATETIME2)`. `TRY_CAST`
   returns NULL for a value it cannot convert, so one malformed row is simply
   skipped instead of crashing the whole export. The ISO "YYYY-MM-DD HH:MM:SS"
@@ -57,6 +79,12 @@ comparison**:
 -- Are the procedures there?
 SELECT name, create_date FROM sys.procedures ORDER BY name;
 -- expect: GetDocuments, GetDocumentsFiltered, SaveDocument
+
+-- Did the AiAnswerJson column arrive? (non-NULL = yes)
+SELECT COL_LENGTH('Documents', 'AiAnswerJson');
+
+-- Does SaveDocument have all 12 parameters (incl. @AiAnswerJson)?
+EXEC sp_help SaveDocument;
 
 -- Call them directly - the same thing Python does:
 EXEC GetDocuments;

@@ -33,6 +33,7 @@ class FileResult(BaseModel):
     text: str = ""
     fields: dict = {}
     answer: str = ""
+    ai_answer_json: dict | None = None
     error: str = ""
     tokens: TokenUsage | None = None
 
