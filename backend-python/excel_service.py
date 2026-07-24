@@ -511,32 +511,6 @@ def calculate_invoice_volume(records) -> list:
     return [{"extraction_date": date.today(), "invoice_count": len(records)}]
 
 
-def calculate_vendor_mix(records) -> list:
-    vendor_counts = defaultdict(int)
-    labels = {}
-    total = len(records)
-    recovery_map = build_gstin_recovery_map(records)
-
-    for record in records:
-        fields = parse_key_values_json(record.get("fields", {}))
-        gstin = resolve_vendor_gstin(fields, recovery_map) or "Unknown"
-        model = record.get("model", "")
-        vendor_counts[gstin] += 1
-        labels[gstin] = DOC_TYPE_LABELS.get(model, model or "Unknown")
-
-    result = []
-    for gstin in sorted(vendor_counts):
-        count = vendor_counts[gstin]
-        result.append({
-            "vendor_gstin": gstin,
-            "doc_type": labels[gstin],
-            "invoice_count": count,
-            # Stored as a decimal (2 of 4 -> 0.5); shown as 50.00% by the format.
-            "vendor_percentage": count / total if total else 0.0,
-        })
-    return result
-
-
 def calculate_vendor_mix_from_extraction_log(extraction_rows: list) -> list:
     """Build VENDOR MIX from the Vendor GSTIN value already shown in the log.
 

@@ -166,29 +166,24 @@ class TrendAndMixTests(unittest.TestCase):
         self.assertEqual(volume[0]["invoice_count"], 3)
         self.assertEqual(excel_service.calculate_invoice_volume([]), [])
 
-    def test_vendor_mix_recovers_pan_to_sibling_gstin(self):
-        # c.pdf's tax id was read as only the PAN, but a.pdf/b.pdf carry the full
-        # GSTIN (which embeds that PAN), so c is grouped with the real vendor.
+    def test_vendor_mix_uses_only_the_gstin_shown_in_extraction_log(self):
+        # Vendor Mix must not re-parse or recover a GSTIN independently. A
+        # PAN-only log value stays Unknown, exactly as it appears in the log.
         records = [
             record(1, "a.pdf", {"VendorTaxId": wrap(GSTIN)}),
             record(2, "b.pdf", {"VendorTaxId": wrap(GSTIN)}),
             record(3, "c.pdf", {"VendorTaxId": wrap(PAN)}),
             record(4, "d.pdf", {}),
         ]
-        mix = {m["vendor_gstin"]: m for m in excel_service.calculate_vendor_mix(records)}
-        self.assertEqual(mix[GSTIN]["invoice_count"], 3)       # a + b + recovered c
-        self.assertEqual(mix[GSTIN]["vendor_percentage"], 0.75)
-        self.assertEqual(mix["Unknown"]["invoice_count"], 1)   # only the empty d.pdf
-        self.assertNotIn(PAN, mix)                              # never grouped as a PAN
-
-    def test_vendor_mix_pan_stays_unknown_without_sibling_gstin(self):
-        # With no sibling GSTIN to recover from, a PAN-only record is Unknown -
-        # a PAN is never shown as a vendor GSTIN.
-        records = [record(1, "c.pdf", {"VendorTaxId": wrap(PAN)})]
-        mix = {m["vendor_gstin"]: m for m in excel_service.calculate_vendor_mix(records)}
-        self.assertEqual(mix["Unknown"]["invoice_count"], 1)
+        log_rows = excel_service.build_extraction_log_rows(records, "prebuilt-invoice")
+        mix = {
+            item["vendor_gstin"]: item
+            for item in excel_service.calculate_vendor_mix_from_extraction_log(log_rows)
+        }
+        self.assertEqual(mix[GSTIN]["invoice_count"], 2)
+        self.assertEqual(mix[GSTIN]["vendor_percentage"], 0.5)
+        self.assertEqual(mix["Unknown"]["invoice_count"], 2)
         self.assertNotIn(PAN, mix)
-        self.assertNotIn(GSTIN, mix)
 
     def test_vendor_mix_uses_the_same_gstin_as_extraction_log(self):
         second_gstin = "07AAFCA4044E1Z3"
