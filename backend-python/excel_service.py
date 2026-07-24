@@ -4,8 +4,7 @@ import logging
 import os
 import re
 from collections import defaultdict
-from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import date, datetime
 
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
@@ -23,9 +22,6 @@ DATA_SOURCE = "Invoice_DataBatch"
 
 # Excel refuses cells longer than 32,767 characters; stay safely below that.
 MAX_CELL_LENGTH = 32000
-
-# CreatedAt is stored in UTC; the report groups days in local time.
-LOCAL_TZ = ZoneInfo("Asia/Kolkata")
 
 # Friendly names per Document Intelligence model id.
 DOC_TYPE_LABELS = {
@@ -330,25 +326,6 @@ def parse_date(value):
     return None
 
 
-def extraction_date_local(created_at):
-    """The local calendar day a document was extracted on.
-
-    CreatedAt is stored as "YYYY-MM-DD HH:MM:SS" in UTC; a document analysed
-    late in the local evening would land on the wrong day without converting.
-    Returns None when the value cannot be read as a date at all.
-    """
-    if isinstance(created_at, datetime):
-        moment = created_at
-    else:
-        try:
-            moment = datetime.strptime(str(created_at).strip(), "%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
-            return parse_date(created_at)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(LOCAL_TZ).date()
-
-
 def _numeric_value(value):
     # Take the first number in the text, so a value OCR duplicated across two
     # lines ("5,142.60 5,142.60") or prefixed with a currency symbol ("₹46,273.00")
@@ -482,18 +459,11 @@ def calculate_validity_trend(extraction_rows: list) -> list:
 
 
 def calculate_invoice_volume(records) -> list:
-    grouped = defaultdict(set)
-    for index, record in enumerate(records):
-        created_at = record.get("createdAt")
-        extraction_date = extraction_date_local(created_at)
-        if extraction_date is None:
-            logger.warning("Skipping record with unreadable CreatedAt: %r", created_at)
-            continue
-        grouped[extraction_date].add(str(record.get("id", index)))
-    return [
-        {"extraction_date": day, "invoice_count": len(grouped[day])}
-        for day in sorted(grouped)
-    ]
+    # The report is an audit snapshot: the extraction date is the day the Excel
+    # is generated (today), and every invoice in the export is counted under it.
+    if not records:
+        return []
+    return [{"extraction_date": date.today(), "invoice_count": len(records)}]
 
 
 def calculate_vendor_mix(records) -> list:
