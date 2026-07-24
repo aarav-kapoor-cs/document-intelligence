@@ -10,6 +10,8 @@ from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font
 
+import ocr_service
+
 # Builds the audit workbook (same 6 sheets as the mentor's template,
 # DriftTemplateInterns.xlsx) from the rows database.get_filtered() returns.
 # KeyValuesJson (each record's "fields" dict) is the source of truth: every
@@ -405,7 +407,10 @@ def build_extraction_log_rows(records, doc_type: str) -> list:
     all_fields = set()
 
     for record in records:
-        fields = parse_key_values_json(record.get("fields", {}))
+        # Copy fields so export-time PAN->GSTIN repair does not mutate the DB row.
+        raw_fields = dict(record.get("fields") or {})
+        ocr_service._fix_vendor_gstin(raw_fields, record.get("documentText") or "")
+        fields = parse_key_values_json(raw_fields)
         source_file = record.get("fileName", "")
         if fields:
             logger.info("Processing %s: %d field(s) %s", source_file, len(fields), sorted(fields))

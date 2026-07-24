@@ -88,19 +88,22 @@ def ensure_table():
             # execute() call - SQL Server wants it alone in a batch.
             cursor.execute(
                 "CREATE OR ALTER VIEW DocumentsExport AS "
-                "SELECT Id, FileName, Model, KeyValuesJson, AiAnswerJson, CreatedAt FROM Documents"
+                "SELECT Id, FileName, Model, DocumentText, KeyValuesJson, AiAnswerJson, CreatedAt "
+                "FROM Documents"
             )
             # Stored procedure for the Excel export: filters the view by a date
             # window and the document type. The dates are real DATETIME2 values,
             # not text: TRY_CAST turns the stored "YYYY-MM-DD HH:MM:SS" text into
             # a date for a proper date comparison (a malformed row becomes NULL
             # and is skipped, instead of crashing the whole export).
+            # DocumentText is included so Excel can repair a PAN-only VendorTaxId
+            # using the GSTIN already present in the OCR page text.
             cursor.execute(
                 "CREATE OR ALTER PROCEDURE GetDocumentsFiltered "
                 "  @FromDate DATETIME2, @ToDate DATETIME2, @Model NVARCHAR(100) "
                 "AS BEGIN "
                 "  SET NOCOUNT ON; "
-                "  SELECT Id, FileName, Model, KeyValuesJson, AiAnswerJson, CreatedAt "
+                "  SELECT Id, FileName, Model, DocumentText, KeyValuesJson, AiAnswerJson, CreatedAt "
                 "  FROM DocumentsExport "
                 "  WHERE TRY_CAST(CreatedAt AS DATETIME2) BETWEEN @FromDate AND @ToDate "
                 "    AND Model = @Model "
@@ -164,7 +167,8 @@ def ensure_table():
             cursor.execute("DROP VIEW IF EXISTS DocumentsExport")
             cursor.execute(
                 "CREATE VIEW DocumentsExport AS "
-                "SELECT Id, FileName, Model, KeyValuesJson, AiAnswerJson, CreatedAt FROM Documents"
+                "SELECT Id, FileName, Model, DocumentText, KeyValuesJson, AiAnswerJson, CreatedAt "
+                "FROM Documents"
             )
             conn.commit()
     finally:
@@ -237,7 +241,7 @@ def get_filtered(from_date, to_date, model):
         cursor.execute("EXEC GetDocumentsFiltered ?, ?, ?", (from_dt, to_dt, model))
     else:
         cursor.execute(
-            "SELECT Id, FileName, Model, KeyValuesJson, AiAnswerJson, CreatedAt "
+            "SELECT Id, FileName, Model, DocumentText, KeyValuesJson, AiAnswerJson, CreatedAt "
             "FROM DocumentsExport "
             "WHERE CreatedAt >= ? AND CreatedAt <= ? AND Model = ? "
             "ORDER BY Id",
@@ -248,18 +252,19 @@ def get_filtered(from_date, to_date, model):
 
     records = []
     for row in rows:
-        # Columns: Id, FileName, Model, KeyValuesJson, AiAnswerJson, CreatedAt
+        # Columns: Id, FileName, Model, DocumentText, KeyValuesJson, AiAnswerJson, CreatedAt
         try:
-            ai_json = json.loads(row[4]) if row[4] else None
+            ai_json = json.loads(row[5]) if row[5] else None
         except Exception:
             ai_json = None
         records.append({
             "id": row[0],
             "fileName": row[1],
             "model": row[2],
-            "fields": json.loads(row[3] or "{}"),
+            "documentText": row[3] or "",
+            "fields": json.loads(row[4] or "{}"),
             "aiAnswerJson": ai_json,
-            "createdAt": row[5],
+            "createdAt": row[6],
         })
     return records
 

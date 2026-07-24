@@ -19,10 +19,11 @@ GSTIN = "27ABICX1218R1ZX"
 PAN = "ABICX1218R"
 
 
-def record(id, file_name, fields, created_at="2026-07-23 10:00:00"):
+def record(id, file_name, fields, created_at="2026-07-23 10:00:00", document_text=""):
     """A record shaped exactly like database.get_filtered() returns."""
     return {
         "id": id, "fileName": file_name, "model": "prebuilt-invoice",
+        "documentText": document_text,
         "fields": fields, "aiAnswerJson": None, "createdAt": created_at,
     }
 
@@ -151,6 +152,24 @@ class ExtractionLogTests(unittest.TestCase):
         self.assertEqual(pan_row["ocr_value"], PAN)          # not blanked
         self.assertEqual(pan_row["completeness_flag"], "Y")  # a value exists
         self.assertEqual(pan_row["validity_flag"], "Fail")   # but it is not a GSTIN
+
+    def test_export_repairs_pan_using_document_text(self):
+        # Old DB rows still have PAN in KeyValuesJson, but DocumentText has the
+        # full GSTIN — Excel must upgrade it without re-uploading the PDF.
+        rows = excel_service.build_extraction_log_rows(
+            [record(
+                12, "IN91-040125-PR-022.pdf",
+                {"VendorTaxId": wrap(PAN)},
+                document_text="GSTIN : 27ABICX1218R1ZX\nPAN No : ABICX1218R\nGSTIN: 06AAEFE1763C1ZW",
+            )],
+            "prebuilt-invoice",
+        )
+        vendor = next(r for r in rows if r["field_name"] == "VendorTaxId")
+        self.assertEqual(vendor["ocr_value"], GSTIN)
+        self.assertEqual(vendor["validity_flag"], "Pass")
+        mix = excel_service.calculate_vendor_mix_from_extraction_log(rows)
+        self.assertEqual(mix[0]["vendor_gstin"], GSTIN)
+        self.assertNotIn("Unknown", {m["vendor_gstin"] for m in mix})
 
     def test_valid_gstin_passes(self):
         good = self.row("a.pdf", "VendorTaxId")
@@ -288,6 +307,7 @@ class DatabaseTests(unittest.TestCase):
         rows = database.get_filtered("2026-07-23", "2026-07-23", "prebuilt-invoice")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["fields"], {"InvoiceId": "X"})
+        self.assertEqual(rows[0]["documentText"], "text")
         self.assertEqual(rows[0]["aiAnswerJson"], {"vendor": "ACME"})
         # ... and not by a different day's window.
         self.assertEqual(database.get_filtered("2026-07-24", "2026-07-24", "prebuilt-invoice"), [])
