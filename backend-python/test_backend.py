@@ -13,6 +13,7 @@ import openpyxl
 
 import database
 import excel_service
+import ocr_service
 
 GSTIN = "27ABICX1218R1ZX"
 PAN = "ABICX1218R"
@@ -32,6 +33,22 @@ def wrap(value):
 
 
 class HelperTests(unittest.TestCase):
+    def test_ocr_recovers_full_vendor_gstin_when_azure_returns_pan_only(self):
+        fields = {"VendorTaxId": wrap(PAN)}
+        ocr_service._fix_vendor_gstin(
+            fields,
+            "Supplier GSTIN: 27ABICX1218R1ZX\nCustomer GSTIN: 07AAFCA4044E1Z3",
+        )
+        self.assertEqual(fields["VendorTaxId"]["value"], GSTIN)
+
+    def test_ocr_never_uses_a_gstin_with_a_different_pan(self):
+        fields = {"VendorTaxId": wrap(PAN)}
+        ocr_service._fix_vendor_gstin(
+            fields,
+            "Customer GSTIN: 07AAFCA4044E1Z3",
+        )
+        self.assertEqual(fields["VendorTaxId"]["value"], PAN)
+
     def test_is_blank(self):
         for value in (None, "", "  ", "none", "null", [], {}, "[]", "{}"):
             self.assertTrue(excel_service.is_blank(value), repr(value))

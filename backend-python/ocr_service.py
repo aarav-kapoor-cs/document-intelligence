@@ -1,23 +1,66 @@
+"""Azure Document Intelligence OCR.
+
+Models:
+  prebuilt-invoice    -> invoice fields (vendor, totals, tax ids, line items)
+  prebuilt-receipt    -> receipt fields
+  prebuilt-idDocument -> ID fields
+  prebuilt-layout     -> raw text + general key-value pairs
+"""
 import os
+import re
 
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest, DocumentAnalysisFeature
 from azure.core.credentials import AzureKeyCredential
 
-# Reads text and fields from a file using Azure Document Intelligence.
-# The model_id decides how the file is read:
-#   prebuilt-layout    -> text + general key-value pairs
-#   prebuilt-invoice   -> invoice fields (vendor, total, line items, ...)
-#   prebuilt-receipt   -> receipt fields
-#   prebuilt-idDocument-> ID fields (name, date of birth, ...)
+GSTIN_RE = re.compile(r"[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]")
+PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+VENDOR_TAX_KEYS = ("VendorGSTIN", "VendorTaxId")
+
+
+def _alnum(text: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
+
+
+def _leaf_text(field) -> str:
+    """Page text first; fall back to Azure's typed value so nothing is dropped."""
+    if field.content:
+        return field.content.strip()
+
+    currency = field.value_currency
+    if currency is not None and currency.amount is not None:
+        symbol = currency.currency_symbol or currency.currency_code or ""
+        return f"{symbol}{currency.amount}".strip()
+
+    address = field.value_address
+    if address is not None:
+        street = getattr(address, "street_address", None) or " ".join(
+            str(part) for part in (
+                getattr(address, "house_number", None),
+                getattr(address, "road", None),
+            ) if part
+        )
+        parts = (
+            getattr(address, "po_box", None), street or None,
+            getattr(address, "unit", None), getattr(address, "city_district", None),
+            getattr(address, "city", None), getattr(address, "state", None),
+            getattr(address, "postal_code", None), getattr(address, "country_region", None),
+        )
+        joined = ", ".join(str(part) for part in parts if part)
+        if joined:
+            return joined
+
+    for value in (
+        field.value_string, field.value_number, field.value_integer,
+        field.value_date, field.value_time, field.value_phone_number,
+        field.value_boolean, field.value_country_region, field.value_selection_mark,
+    ):
+        if value is not None:
+            return str(value)
+    return ""
 
 
 def _field_to_json(field):
-    """Convert one Azure field into plain JSON: objects become dicts, arrays
-    become lists, and everything else becomes its text value. Every level -
-    the field itself, each line item, and each cell inside it - is wrapped as
-    {"value": ..., "confidence": ...}, so the app can show how sure Azure was
-    about every single value, not just the field as a whole."""
     if field.type == "array":
         value = [_field_to_json(item) for item in field.value_array or []]
     elif field.type == "object":
@@ -27,92 +70,74 @@ def _field_to_json(field):
     return {"value": value, "confidence": field.confidence}
 
 
-def _leaf_text(field):
-    """The text read from the page - or, when Azure normalizes a value (totals,
-    dates, addresses, ...) without page text, the typed value, so nothing is lost."""
-    if field.content:
-        return field.content.strip()
+def _fix_vendor_gstin(fields, document_text):
+    """If Azure stored only a PAN in VendorTaxId, replace it with the matching GSTIN from OCR text.
 
-    currency = field.value_currency
-    if currency is not None and currency.amount is not None:
-        symbol = currency.currency_symbol or currency.currency_code or ""
-        return (str(symbol) + str(currency.amount)).strip()
+    A GSTIN embeds its PAN at characters 3-12 (e.g. 27ABICX1218R1ZX). Only a GSTIN
+    that embeds that exact PAN is accepted — never the customer's GSTIN.
+    """
+    for key in VENDOR_TAX_KEYS:
+        field = fields.get(key)
+        if not isinstance(field, dict):
+            continue
 
-    address = field.value_address
-    if address is not None:
-        # Prefer the single-line street_address; when Azure leaves it empty but
-        # fills the pieces (house number, road, ...), assemble them so a vendor
-        # or customer address is never dropped or shown half-empty.
-        street = getattr(address, "street_address", None) or " ".join(
-            str(part) for part in (getattr(address, "house_number", None),
-                                   getattr(address, "road", None)) if part)
-        parts = (getattr(address, "po_box", None), street or None,
-                 getattr(address, "unit", None), getattr(address, "city_district", None),
-                 getattr(address, "city", None), getattr(address, "state", None),
-                 getattr(address, "postal_code", None), getattr(address, "country_region", None))
-        joined = ", ".join(str(part) for part in parts if part)
-        if joined:
-            return joined
+        raw = _alnum(str(field.get("value") or ""))
+        # Already a full GSTIN, or a GSTIN buried in the field text — keep/use it.
+        embedded = GSTIN_RE.findall(raw)
+        if embedded:
+            fields[key] = {**field, "value": embedded[0]}
+            return
+        if not PAN_RE.fullmatch(raw):
+            continue
 
-    for value in (field.value_string, field.value_number, field.value_integer,
-                  field.value_date, field.value_time, field.value_phone_number,
-                  field.value_boolean, field.value_country_region,
-                  field.value_selection_mark):
-        if value is not None:
-            return str(value)
-
-    return ""
+        matches = {
+            gstin for gstin in GSTIN_RE.findall(_alnum(document_text))
+            if gstin[2:12] == raw
+        }
+        if len(matches) == 1:
+            gstin = matches.pop()
+            fields[key] = {**field, "value": gstin}
+            print(f"OCR: upgraded {key} PAN {raw} -> GSTIN {gstin}")
+        return
 
 
-# Give it the model id and the file bytes; get back (text, fields), where fields
-# maps each field name to {"value": ..., "confidence": ...} - the value is
-# JSON-ready and the confidence is Azure's 0-1 score (or None if not given).
-# Nested values (e.g. each invoice line item and each cell in it) carry their
-# own {"value", "confidence"} wrapper too.
 def analyze(model_id, file_bytes):
+    """Run OCR. Returns (full_page_text, fields) where each field is {value, confidence}."""
     endpoint = os.getenv("DOC_INTELLIGENCE_ENDPOINT", "")
     key = os.getenv("DOC_INTELLIGENCE_KEY", "")
-
-    # If OCR is not set up yet (endpoint is still a placeholder), return empty
-    # results so the app still runs.
     if not endpoint.startswith("http"):
-        print("OCR: not configured (endpoint is a placeholder) - returning empty text.")
+        print("OCR: not configured — returning empty result.")
         return "", {}
 
     client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
-
-    # Extra features: high-resolution OCR reads small or dense print more
-    # accurately (better values and confidence, at a small extra cost per
-    # page), and "keyValuePairs" only works with the layout model.
     features = [DocumentAnalysisFeature.OCR_HIGH_RESOLUTION]
     if model_id == "prebuilt-layout":
         features.append(DocumentAnalysisFeature.KEY_VALUE_PAIRS)
 
-    print("OCR: reading the file with Azure Document Intelligence (model: " + model_id + ")...")
-    poller = client.begin_analyze_document(
+    print(f"OCR: analyzing with {model_id}...")
+    result = client.begin_analyze_document(
         model_id,
         AnalyzeDocumentRequest(bytes_source=file_bytes),
         features=features,
-    )
-    result = poller.result()
+    ).result()
 
     text = result.content or ""
     fields = {}
 
-    # Layout returns general key-value pairs; keep the first value seen per key.
-    # The confidence says how sure Azure is that this key and value belong together.
+    # Layout key-value pairs (general documents).
     for pair in (result.key_value_pairs or []):
         pair_key = ((pair.key.content if pair.key else "") or "").strip()
         pair_value = ((pair.value.content if pair.value else "") or "").strip()
         if pair_key and pair_value and pair_key not in fields:
             fields[pair_key] = {"value": pair_value, "confidence": pair.confidence}
 
-    # Prebuilt models (invoice, receipt, id) return named fields that may nest
-    # (e.g. an invoice's line items) - keep that structure as nested JSON.
-    # The confidence says how sure Azure is that the field was found and read right.
+    # Structured fields from invoice / receipt / id models.
     for document in (result.documents or []):
         for name, field in (document.fields or {}).items():
             fields[name] = _field_to_json(field)
 
-    print("OCR: done - " + str(len(text)) + " characters and " + str(len(fields)) + " field(s).")
+    if model_id == "prebuilt-invoice":
+        _fix_vendor_gstin(fields, text)
+
+    print(f"OCR: done — {len(text)} chars, {len(fields)} field(s).")
     return text, fields
