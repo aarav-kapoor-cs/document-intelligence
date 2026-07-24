@@ -40,9 +40,19 @@ def _leaf_text(field):
 
     address = field.value_address
     if address is not None:
-        parts = (address.street_address, address.city, address.state,
-                 address.postal_code, address.country_region)
-        return ", ".join(str(part) for part in parts if part)
+        # Prefer the single-line street_address; when Azure leaves it empty but
+        # fills the pieces (house number, road, ...), assemble them so a vendor
+        # or customer address is never dropped or shown half-empty.
+        street = getattr(address, "street_address", None) or " ".join(
+            str(part) for part in (getattr(address, "house_number", None),
+                                   getattr(address, "road", None)) if part)
+        parts = (getattr(address, "po_box", None), street or None,
+                 getattr(address, "unit", None), getattr(address, "city_district", None),
+                 getattr(address, "city", None), getattr(address, "state", None),
+                 getattr(address, "postal_code", None), getattr(address, "country_region", None))
+        joined = ", ".join(str(part) for part in parts if part)
+        if joined:
+            return joined
 
     for value in (field.value_string, field.value_number, field.value_integer,
                   field.value_date, field.value_time, field.value_phone_number,
