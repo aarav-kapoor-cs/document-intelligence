@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -60,7 +60,7 @@ def _save(file_name, model, prompt, text, fields, ai_json, answer, tokens, promp
         tokens.prompt_tokens if tokens else 0,
         tokens.completion_tokens if tokens else 0,
         tokens.total_tokens if tokens else 0,
-        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         prompt_id,
     )
     print("DATABASE: saved.")

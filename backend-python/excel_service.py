@@ -74,6 +74,17 @@ GSTIN_KEYS = (
     "TaxRegistrationNumber",
 )
 
+# The buyer's tax id - never reported as the vendor's GSTIN.
+CUSTOMER_GSTIN_KEYS = (
+    "CustomerTaxId",
+    "Customer Tax Id",
+    "CustomerGSTIN",
+    "Customer GSTIN",
+    "BuyerGSTIN",
+    "Buyer GSTIN",
+    "BillToGSTIN",
+)
+
 # Where to look for the document number shown in the "Number" column.
 DOCUMENT_NUMBER_KEYS = (
     "InvoiceId",
@@ -204,6 +215,20 @@ def _gstin_candidates(value):
     return GSTIN_SEARCH.findall(_cell_text(value).upper())
 
 
+def get_customer_gstin_from_key_values_json(key_values_json: dict) -> str:
+    """The buyer's GSTIN, so it is never mistaken for the vendor's."""
+    if not isinstance(key_values_json, dict):
+        return ""
+    for key in CUSTOMER_GSTIN_KEYS:
+        value = _find_case_insensitive(key_values_json, key)
+        if value is None:
+            continue
+        for candidate in _gstin_candidates(value):
+            if is_valid_gstin(candidate):
+                return _normalize_tax_id(candidate)
+    return ""
+
+
 def get_vendor_gstin_from_key_values_json(key_values_json: dict) -> str:
     if not isinstance(key_values_json, dict):
         return ""
@@ -221,19 +246,37 @@ def get_vendor_gstin_from_key_values_json(key_values_json: dict) -> str:
         if is_pan(plain):
             logger.debug("Rejected PAN found under key %s: %s", key, plain)
 
-    # Last JSON-only fallback: inspect key-value pairs whose key names mention GSTIN.
+    # Next fallback: any key whose name mentions GST/GSTIN (but not the customer's).
     # Raw OCR document text is deliberately not used here.
     for key, value in key_values_json.items():
         key_text = str(key).casefold()
-        if "gstin" not in key_text and "gst" not in key_text:
+        if "gst" not in key_text or _is_customer_key(key_text):
             continue
         for candidate in _gstin_candidates(value):
             if is_valid_gstin(candidate):
                 logger.debug("Vendor GSTIN selected from JSON key %s: %s", key, candidate)
                 return _normalize_tax_id(candidate)
 
+    # Final fallback: any valid GSTIN anywhere in the record that is NOT the
+    # customer's. This catches a vendor GSTIN sitting under an unusual key name
+    # (e.g. "Vendor Registration No") that the lists above did not anticipate,
+    # so a GSTIN visible in the extraction log is also found for VENDOR MIX.
+    customer_gstin = get_customer_gstin_from_key_values_json(key_values_json)
+    for key, value in key_values_json.items():
+        if _is_customer_key(str(key).casefold()):
+            continue
+        for candidate in _gstin_candidates(value):
+            normalized = _normalize_tax_id(candidate)
+            if is_valid_gstin(normalized) and normalized != customer_gstin:
+                logger.debug("Vendor GSTIN found under key %s: %s", key, normalized)
+                return normalized
+
     logger.debug("No valid Vendor GSTIN found in KeyValuesJson")
     return ""
+
+
+def _is_customer_key(key_text: str) -> bool:
+    return any(token in key_text for token in ("customer", "buyer", "bill to", "billto", "billing"))
 
 
 def _pan_of_gstin(gstin: str) -> str:

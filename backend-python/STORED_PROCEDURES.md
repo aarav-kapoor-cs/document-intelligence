@@ -49,17 +49,17 @@ at startup.
 
 ## Why `GetDocumentsFiltered` takes DATETIME2 parameters
 
-`CreatedAt` is stored as text (`NVARCHAR(40)`, "YYYY-MM-DD HH:MM:SS" in UTC).
-The old version compared that text against text parameters — it only worked
-because of the fixed format. The procedure now does a **real date
-comparison**:
+`CreatedAt` is stored as text (`NVARCHAR(40)`, "YYYY-MM-DD HH:MM:SS" in the
+machine's **local time**). The old version compared that text against text
+parameters — it only worked because of the fixed format. The procedure now
+does a **real date comparison**:
 
 - The parameters are `@FromDate DATETIME2, @ToDate DATETIME2`, and Python
   passes real `datetime` values (pyodbc sends them as dates, not strings).
-  Since 2026-07-24 those values are the requested IST dates **converted to
-  UTC** (`database._window_utc`), because `CreatedAt` is saved in UTC — a
-  document analysed at 01:00 IST is stored under the previous UTC date and
-  would otherwise fall out of a same-day report.
+  There is **no timezone conversion**: `CreatedAt` is written in local time
+  (`datetime.now()`), the user picks local report dates, and `database._window`
+  turns those dates into the plain `00:00:00 … 23:59:59` window with no offset.
+  A document and the report it appears in are always on the same clock.
 - The column is converted with `TRY_CAST(CreatedAt AS DATETIME2)`. `TRY_CAST`
   returns NULL for a value it cannot convert, so one malformed row is simply
   skipped instead of crashing the whole export. The ISO "YYYY-MM-DD HH:MM:SS"

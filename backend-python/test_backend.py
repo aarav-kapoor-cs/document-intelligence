@@ -58,6 +58,22 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(
             excel_service.get_vendor_gstin_from_key_values_json({"VendorTaxId": wrap(PAN)}), "")
 
+    def test_vendor_gstin_found_under_unusual_key(self):
+        # A GSTIN under a key none of the lists anticipated is still found, so
+        # VENDOR MIX matches the GSTIN visible in the extraction log.
+        fields = {"Vendor Registration No": wrap(GSTIN)}
+        self.assertEqual(excel_service.get_vendor_gstin_from_key_values_json(fields), GSTIN)
+
+    def test_vendor_gstin_never_returns_customer_gstin(self):
+        # Only the customer's GSTIN is present -> the vendor's is unknown, and the
+        # buyer's id is never reported as the vendor's.
+        customer = "27AACCP8967E2Z0"
+        fields = {"CustomerTaxId": wrap(customer)}
+        self.assertEqual(excel_service.get_vendor_gstin_from_key_values_json(fields), "")
+        # Both present -> the vendor's (not the customer's) comes back.
+        fields = {"CustomerTaxId": wrap(customer), "Seller Registration": wrap(GSTIN)}
+        self.assertEqual(excel_service.get_vendor_gstin_from_key_values_json(fields), GSTIN)
+
     def test_parse_date_formats(self):
         for text in ("2025-04-16", "16/04/2025", "16-04-2025", "16 Apr 2025"):
             self.assertEqual(excel_service.parse_date(text), date(2025, 4, 16), text)
@@ -229,10 +245,10 @@ class DatabaseTests(unittest.TestCase):
         database.DB_PATH = self.original_path
         os.unlink(self.tmp.name)
 
-    def test_window_utc_shifts_ist_to_utc(self):
-        from_dt, to_dt = database._window_utc("2026-07-24", "2026-07-24")
-        self.assertEqual(from_dt, datetime(2026, 7, 23, 18, 30, 0))
-        self.assertEqual(to_dt, datetime(2026, 7, 24, 18, 29, 59))
+    def test_window_is_plain_local_day_no_timezone_shift(self):
+        from_dt, to_dt = database._window("2026-07-24", "2026-07-24")
+        self.assertEqual(from_dt, datetime(2026, 7, 24, 0, 0, 0))
+        self.assertEqual(to_dt, datetime(2026, 7, 24, 23, 59, 59))
 
     def test_save_ai_answer_json(self):
         self.assertIsNone(database.save_ai_answer_json(None))
@@ -241,15 +257,15 @@ class DatabaseTests(unittest.TestCase):
     def test_save_and_get_filtered_round_trip(self):
         database.save("t.pdf", "prebuilt-invoice", "p", "text", '{"InvoiceId": "X"}',
                       '{"vendor": "ACME"}', "ans", 1, 2, 3, "2026-07-23 19:30:00", "pid")
-        # 19:30 UTC on the 23rd is the 24th in IST -> found by the 24th's window.
-        rows = database.get_filtered("2026-07-24", "2026-07-24", "prebuilt-invoice")
+        # No timezone shift: a record at 19:30 on the 23rd belongs to the 23rd.
+        rows = database.get_filtered("2026-07-23", "2026-07-23", "prebuilt-invoice")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["fields"], {"InvoiceId": "X"})
         self.assertEqual(rows[0]["aiAnswerJson"], {"vendor": "ACME"})
-        # ... and correctly NOT found by the 23rd-only IST window.
-        self.assertEqual(database.get_filtered("2026-07-23", "2026-07-23", "prebuilt-invoice"), [])
+        # ... and not by a different day's window.
+        self.assertEqual(database.get_filtered("2026-07-24", "2026-07-24", "prebuilt-invoice"), [])
         # Wrong document type -> no rows.
-        self.assertEqual(database.get_filtered("2026-07-24", "2026-07-24", "prebuilt-receipt"), [])
+        self.assertEqual(database.get_filtered("2026-07-23", "2026-07-23", "prebuilt-receipt"), [])
 
     def test_get_all_parses_json_columns(self):
         database.save("t.pdf", "prebuilt-invoice", "p", "text", '{"A": 1}',

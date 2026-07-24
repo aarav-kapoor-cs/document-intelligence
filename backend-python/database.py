@@ -1,8 +1,7 @@
 import os
 import json
 import sqlite3
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 # A small database helper. By default it saves to a SQLite file (documents.db)
 # next to this file, using plain SQL. If USE_SQL_SERVER=true in the .env, it
@@ -11,9 +10,6 @@ from zoneinfo import ZoneInfo
 
 # Keep the SQLite file next to this file, no matter where the app is started from.
 DB_PATH = os.path.join(os.path.dirname(__file__), "documents.db")
-
-# CreatedAt is stored in UTC, but users pick report dates in local time.
-LOCAL_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def _use_sql_server():
@@ -216,18 +212,15 @@ def save_ai_answer_json(ai_json: dict | None) -> str | None:
         return None
 
 
-def _window_utc(from_date, to_date):
-    """Turn the report's local dates into naive UTC datetimes.
+def _window(from_date, to_date):
+    """The report's date window as naive datetimes, edges fully included.
 
-    CreatedAt is stored in UTC, but the user picks local dates. Without this
-    conversion, a document analysed early in the local morning (still the
-    previous day in UTC) would silently fall out of a same-day report.
+    CreatedAt is saved in the machine's local time, and the user picks local
+    report dates, so the two are compared directly with no timezone maths.
     """
-    local_from = datetime.strptime(from_date + " 00:00:00", "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOCAL_TZ)
-    local_to = datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOCAL_TZ)
     return (
-        local_from.astimezone(timezone.utc).replace(tzinfo=None),
-        local_to.astimezone(timezone.utc).replace(tzinfo=None),
+        datetime.strptime(from_date + " 00:00:00", "%Y-%m-%d %H:%M:%S"),
+        datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S"),
     )
 
 
@@ -235,7 +228,7 @@ def _window_utc(from_date, to_date):
 # On SQL Server this calls the GetDocumentsFiltered stored procedure; SQLite
 # has no procedures, so there it is a plain SELECT on the DocumentsExport view.
 def get_filtered(from_date, to_date, model):
-    from_dt, to_dt = _window_utc(from_date, to_date)
+    from_dt, to_dt = _window(from_date, to_date)
     conn = _open()
     cursor = conn.cursor()
     if _use_sql_server():
