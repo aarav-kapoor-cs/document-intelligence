@@ -71,6 +71,25 @@ class HelperTests(unittest.TestCase):
             excel_service.extraction_date_local("2026-07-23 10:00:00"), date(2026, 7, 23))
         self.assertIsNone(excel_service.extraction_date_local("garbage"))
 
+    def test_cell_text_collapses_newlines_and_duplicates(self):
+        # A value OCR split across two lines becomes one clean line.
+        self.assertEqual(excel_service._cell_text(wrap("16-\nApr-25")), "16- Apr-25")
+        # The same value repeated on two lines collapses to a single value.
+        self.assertEqual(excel_service._cell_text(wrap("5,142.60\n5,142.60")), "5,142.60")
+
+    def test_cell_text_renders_nested_readably_not_json(self):
+        items = wrap([{"Description": wrap("Mugs"), "Amount": wrap("100")},
+                      {"Description": wrap("Pens"), "Amount": wrap("50")}])
+        text = excel_service._cell_text(items)
+        self.assertNotIn("{", text)  # not a raw JSON dump
+        self.assertIn("Description: Mugs", text)
+        self.assertIn("Amount: 50", text)
+
+    def test_newline_date_and_duplicate_amount_now_valid(self):
+        self.assertTrue(excel_service.is_valid_field_value("InvoiceDate", "16-\nApr-25"))
+        self.assertTrue(excel_service.is_valid_field_value("TotalTax", "5,142.60\n5,142.60"))
+        self.assertTrue(excel_service.is_valid_field_value("InvoiceTotal", "\u20b946,273.00"))
+
     def test_is_valid_field_value(self):
         self.assertTrue(excel_service.is_valid_field_value("VendorTaxId", GSTIN))
         self.assertFalse(excel_service.is_valid_field_value("VendorTaxId", PAN))
@@ -141,7 +160,9 @@ class TrendAndMixTests(unittest.TestCase):
             [(v["extraction_date"], v["invoice_count"]) for v in volume],
             [(date(2026, 7, 23), 1), (date(2026, 7, 24), 1)])
 
-    def test_vendor_mix_decimal_and_never_pan(self):
+    def test_vendor_mix_recovers_pan_to_sibling_gstin(self):
+        # c.pdf's tax id was read as only the PAN, but a.pdf/b.pdf carry the full
+        # GSTIN (which embeds that PAN), so c is grouped with the real vendor.
         records = [
             record(1, "a.pdf", {"VendorTaxId": wrap(GSTIN)}),
             record(2, "b.pdf", {"VendorTaxId": wrap(GSTIN)}),
@@ -149,10 +170,19 @@ class TrendAndMixTests(unittest.TestCase):
             record(4, "d.pdf", {}),
         ]
         mix = {m["vendor_gstin"]: m for m in excel_service.calculate_vendor_mix(records)}
-        self.assertEqual(mix[GSTIN]["invoice_count"], 2)
-        self.assertEqual(mix[GSTIN]["vendor_percentage"], 0.5)
-        self.assertEqual(mix["Unknown"]["invoice_count"], 2)  # PAN-only + empty
+        self.assertEqual(mix[GSTIN]["invoice_count"], 3)       # a + b + recovered c
+        self.assertEqual(mix[GSTIN]["vendor_percentage"], 0.75)
+        self.assertEqual(mix["Unknown"]["invoice_count"], 1)   # only the empty d.pdf
+        self.assertNotIn(PAN, mix)                              # never grouped as a PAN
+
+    def test_vendor_mix_pan_stays_unknown_without_sibling_gstin(self):
+        # With no sibling GSTIN to recover from, a PAN-only record is Unknown -
+        # a PAN is never shown as a vendor GSTIN.
+        records = [record(1, "c.pdf", {"VendorTaxId": wrap(PAN)})]
+        mix = {m["vendor_gstin"]: m for m in excel_service.calculate_vendor_mix(records)}
+        self.assertEqual(mix["Unknown"]["invoice_count"], 1)
         self.assertNotIn(PAN, mix)
+        self.assertNotIn(GSTIN, mix)
 
 
 class WorkbookTests(unittest.TestCase):
@@ -180,6 +210,14 @@ class WorkbookTests(unittest.TestCase):
         pct = wb["COMPLETENESS TREND"].cell(2, 6)
         self.assertEqual(pct.number_format, "0.00%")
         self.assertLessEqual(pct.value, 1.0)
+
+    def test_completeness_useredit_column_is_blank(self):
+        wb = self.build([record(1, "a.pdf", {"InvoiceId": wrap("INV-1")})])
+        sheet = wb["COMPLETENESS TREND"]
+        self.assertEqual(sheet["E1"].value, "UserEdit_count(Blank)")
+        # Every data row's UserEdit cell must be empty, not a number.
+        for r in range(2, sheet.max_row + 1):
+            self.assertIn(sheet.cell(r, 5).value, (None, ""))
 
     def test_empty_export_still_builds_all_sheets(self):
         wb = self.build([])

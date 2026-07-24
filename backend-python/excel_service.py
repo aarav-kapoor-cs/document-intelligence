@@ -127,14 +127,34 @@ def _plain(node):
     return node
 
 
-def _cell_text(value) -> str:
-    plain = _plain(value)
+def _clean_scalar(value) -> str:
+    # OCR frequently returns a value split across lines ("16-\nApr-25") or the
+    # same value repeated on two lines ("5,142.60\n5,142.60"). Collapse the
+    # whitespace so each cell shows one clean, readable value instead of the
+    # raw multi-line blob it read off the page.
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    halves = text.split(" ")
+    if len(halves) == 2 and halves[0] == halves[1]:
+        text = halves[0]
+    return text
+
+
+def _readable(plain) -> str:
+    # Render a value as plain readable text rather than raw JSON, so line items
+    # and tax blocks read like "Amount: 37,680.00, Description: Mugs" instead of
+    # {"Amount": "37,680.00", ...} - the values Azure extracted, just legible.
     if is_blank(plain):
         return ""
-    if isinstance(plain, (list, dict)):
-        text = json.dumps(plain, ensure_ascii=False)
-    else:
-        text = str(plain)
+    if isinstance(plain, list):
+        return "; ".join(part for part in (_readable(item) for item in plain) if part)
+    if isinstance(plain, dict):
+        return ", ".join(f"{key}: {_readable(val)}"
+                         for key, val in plain.items() if not is_blank(val))
+    return _clean_scalar(plain)
+
+
+def _cell_text(value) -> str:
+    text = _readable(_plain(value))
     text = ILLEGAL_CHARACTERS_RE.sub("", text)
     return text if len(text) <= MAX_CELL_LENGTH else text[:MAX_CELL_LENGTH] + " ...[truncated]"
 
@@ -220,6 +240,60 @@ def get_vendor_gstin_from_key_values_json(key_values_json: dict) -> str:
     return ""
 
 
+def _pan_of_gstin(gstin: str) -> str:
+    # A 15-character GSTIN embeds the 10-character PAN at positions 3-12,
+    # e.g. 27<ABICX1218R>1ZX. Returns "" for anything that is not a GSTIN.
+    normalized = _normalize_tax_id(gstin)
+    return normalized[2:12] if is_valid_gstin(normalized) else ""
+
+
+def _pan_candidate_from_key_values_json(key_values_json: dict) -> str:
+    # The bare PAN sitting in a vendor tax-id key, when no full GSTIN is present
+    # (Azure sometimes reads only the PAN portion of a GSTIN on one invoice).
+    if not isinstance(key_values_json, dict):
+        return ""
+    for key in GSTIN_KEYS:
+        value = _find_case_insensitive(key_values_json, key)
+        if value is None:
+            continue
+        plain = _normalize_tax_id(_cell_text(value))
+        if is_pan(plain):
+            return plain
+    return ""
+
+
+def build_gstin_recovery_map(records) -> dict:
+    """Map a bare PAN to the full GSTIN of the same vendor within this export.
+
+    When one invoice's tax id was read as only the PAN (ABICX1218R) but another
+    invoice from the same vendor carries the full GSTIN (27ABICX1218R1ZX, which
+    embeds that PAN), the PAN can be resolved back to the real GSTIN. The GSTIN
+    still comes straight from KeyValuesJson - nothing is invented.
+    """
+    mapping = {}
+    for record in records:
+        fields = parse_key_values_json(record.get("fields", {}))
+        pan = _pan_of_gstin(get_vendor_gstin_from_key_values_json(fields))
+        if pan:
+            mapping.setdefault(pan, get_vendor_gstin_from_key_values_json(fields))
+    return mapping
+
+
+def resolve_vendor_gstin(key_values_json: dict, recovery_map: dict | None = None) -> str:
+    """The vendor GSTIN for one record, recovering it from a sibling record's
+    GSTIN when only a PAN was extracted here."""
+    gstin = get_vendor_gstin_from_key_values_json(key_values_json)
+    if gstin:
+        return gstin
+    if recovery_map:
+        pan = _pan_candidate_from_key_values_json(key_values_json)
+        if pan in recovery_map:
+            logger.info("Recovered Vendor GSTIN %s from PAN %s via a sibling record",
+                        recovery_map[pan], pan)
+            return recovery_map[pan]
+    return ""
+
+
 def get_document_number_from_key_values_json(key_values_json: dict) -> str:
     for key in DOCUMENT_NUMBER_KEYS:
         value = _find_case_insensitive(key_values_json, key)
@@ -236,18 +310,23 @@ def parse_date(value):
         return value
     if not value:
         return None
-    text = str(value).strip().replace("\n", " ")
-    text = re.sub(r"\s+", " ", text)
-    iso_candidate = text[:10]
+    text = re.sub(r"\s+", " ", str(value).strip())
     try:
-        return datetime.fromisoformat(iso_candidate).date()
+        return datetime.fromisoformat(text[:10]).date()
     except ValueError:
         pass
-    for fmt in DATE_FORMATS:
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
+    # OCR can leave a stray space beside a separator ("16- Apr-25"); tightening
+    # it lets an otherwise valid date parse (and so pass the validity check).
+    candidates = [text]
+    tightened = re.sub(r"\s*([/-])\s*", r"\1", text)
+    if tightened != text:
+        candidates.append(tightened)
+    for candidate in candidates:
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(candidate, fmt).date()
+            except ValueError:
+                continue
     return None
 
 
@@ -271,7 +350,13 @@ def extraction_date_local(created_at):
 
 
 def _numeric_value(value):
-    cleaned = re.sub(r"[^0-9.()-]", "", str(value))
+    # Take the first number in the text, so a value OCR duplicated across two
+    # lines ("5,142.60 5,142.60") or prefixed with a currency symbol ("₹46,273.00")
+    # still reads as a single amount instead of failing to parse.
+    match = re.search(r"\(?-?[0-9][0-9,]*\.?[0-9]*\)?", str(value))
+    if not match:
+        raise ValueError(f"no number in {value!r}")
+    cleaned = match.group().replace(",", "")
     if cleaned.startswith("(") and cleaned.endswith(")"):
         cleaned = "-" + cleaned[1:-1]
     return float(cleaned)
@@ -347,13 +432,12 @@ def build_extraction_log_rows(records, doc_type: str) -> list:
 
 
 def calculate_completeness_trend(extraction_rows: list) -> list:
-    stats_by_field = defaultdict(lambda: {"total": 0, "null": 0, "user_blank": 0, "doc_type": ""})
+    stats_by_field = defaultdict(lambda: {"total": 0, "null": 0, "doc_type": ""})
     for row in extraction_rows:
         stats = stats_by_field[row["field_name"]]
         stats["doc_type"] = row["doc_type"]
         stats["total"] += 1
         stats["null"] += row["completeness_flag"] == "N"
-        stats["user_blank"] += is_blank(row["user_edit"])
 
     result = []
     for field_name in sorted(stats_by_field):
@@ -366,7 +450,9 @@ def calculate_completeness_trend(extraction_rows: list) -> list:
             "doc_type": stats["doc_type"],
             "total_records": total,
             "null_count": stats["null"],
-            "user_edit_count": stats["user_blank"],
+            # The UserEdit column is intentionally left blank - there are no user
+            # edits to count, so the cell stays empty rather than showing a number.
+            "user_edit_count": "",
             "completeness_percent": completeness,
         })
     return result
@@ -414,10 +500,11 @@ def calculate_vendor_mix(records) -> list:
     vendor_counts = defaultdict(int)
     labels = {}
     total = len(records)
+    recovery_map = build_gstin_recovery_map(records)
 
     for record in records:
         fields = parse_key_values_json(record.get("fields", {}))
-        gstin = get_vendor_gstin_from_key_values_json(fields) or "Unknown"
+        gstin = resolve_vendor_gstin(fields, recovery_map) or "Unknown"
         model = record.get("model", "")
         vendor_counts[gstin] += 1
         labels[gstin] = DOC_TYPE_LABELS.get(model, model or "Unknown")
