@@ -190,6 +190,21 @@ class TrendAndMixTests(unittest.TestCase):
         self.assertNotIn(PAN, mix)
         self.assertNotIn(GSTIN, mix)
 
+    def test_vendor_mix_uses_the_same_gstin_as_extraction_log(self):
+        second_gstin = "07AAFCA4044E1Z3"
+        records = [
+            record(1, "a.pdf", {"InvoiceId": wrap("INV-1"), "VendorTaxId": wrap(GSTIN)}),
+            record(2, "b.pdf", {"InvoiceId": wrap("INV-2"), "VendorTaxId": wrap(second_gstin)}),
+        ]
+        log_rows = excel_service.build_extraction_log_rows(records, "prebuilt-invoice")
+        mix = {
+            item["vendor_gstin"]: item
+            for item in excel_service.calculate_vendor_mix_from_extraction_log(log_rows)
+        }
+        self.assertEqual(mix[GSTIN]["invoice_count"], 1)
+        self.assertEqual(mix[second_gstin]["invoice_count"], 1)
+        self.assertNotIn("Unknown", mix)
+
 
 class WorkbookTests(unittest.TestCase):
     def build(self, records):

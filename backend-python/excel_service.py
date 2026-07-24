@@ -418,6 +418,7 @@ def build_extraction_log_rows(records, doc_type: str) -> list:
     sorted_fields = sorted(all_fields)
     for record, fields in parsed_records:
         source_file = record.get("fileName", "")
+        record_id = record.get("id", source_file)
         invoice_number = get_document_number_from_key_values_json(fields)
         vendor_gstin = get_vendor_gstin_from_key_values_json(fields)
         if fields:
@@ -438,6 +439,7 @@ def build_extraction_log_rows(records, doc_type: str) -> list:
                 ocr_value = vendor_gstin
 
             rows.append({
+                "record_id": record_id,
                 "invoice_number": invoice_number,
                 "source_file": source_file,
                 "doc_type": label,
@@ -533,6 +535,45 @@ def calculate_vendor_mix(records) -> list:
             "vendor_percentage": count / total if total else 0.0,
         })
     return result
+
+
+def calculate_vendor_mix_from_extraction_log(extraction_rows: list) -> list:
+    """Build VENDOR MIX from the Vendor GSTIN value already shown in the log.
+
+    The log is the workbook's field-level audit source. Reusing its validated
+    Vendor GSTIN cell means VENDOR MIX always groups the same GSTIN the user
+    sees on that invoice's VendorTaxId row.
+    """
+    documents = {}
+    for row in extraction_rows:
+        record_id = row["record_id"]
+        document = documents.setdefault(
+            record_id,
+            {"doc_type": row["doc_type"], "vendor_gstin": ""},
+        )
+        if row["reference_column"] != "Vendor GSTIN":
+            continue
+        candidate = _normalize_tax_id(row["ocr_value"])
+        if is_valid_gstin(candidate):
+            document["vendor_gstin"] = candidate
+
+    vendor_counts = defaultdict(int)
+    labels = {}
+    for document in documents.values():
+        gstin = document["vendor_gstin"] or "Unknown"
+        vendor_counts[gstin] += 1
+        labels[gstin] = document["doc_type"]
+
+    total = len(documents)
+    return [
+        {
+            "vendor_gstin": gstin,
+            "doc_type": labels[gstin],
+            "invoice_count": count,
+            "vendor_percentage": count / total if total else 0.0,
+        }
+        for gstin, count in sorted(vendor_counts.items())
+    ]
 
 
 def _add_header(sheet, headers):
@@ -633,7 +674,7 @@ def build_workbook(rows, from_date, to_date, doc_type):
 
     vendors = workbook.create_sheet("VENDOR MIX")
     _add_header(vendors, ["Vendor_GSTIN", "Document Type", "Invoice_Count", "Vendor_Percentage"])
-    for item in calculate_vendor_mix(rows):
+    for item in calculate_vendor_mix_from_extraction_log(extraction_rows):
         vendors.append([
             item["vendor_gstin"], item["doc_type"], item["invoice_count"], item["vendor_percentage"],
         ])
