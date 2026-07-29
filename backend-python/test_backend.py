@@ -193,14 +193,24 @@ class TrendAndMixTests(unittest.TestCase):
         validity = {v["field_type"]: v for v in excel_service.calculate_validity_trend(rows)}
         self.assertEqual(validity["Base Amount"]["validity_percent"], 0.5)
 
-    def test_invoice_volume_is_report_date_with_total_count(self):
-        # Every invoice in the export is counted under today (the report date).
-        records = [record(1, "a.pdf", {}), record(2, "b.pdf", {}), record(3, "c.pdf", {})]
+    def test_invoice_volume_counts_per_created_at_day(self):
+        # Each invoice is counted under the day it was parsed (CreatedAt),
+        # not under the day the report is generated.
+        records = [
+            record(1, "a.pdf", {}, created_at="2026-07-23 10:00:00"),
+            record(2, "b.pdf", {}, created_at="2026-07-23 18:30:00"),
+            record(3, "c.pdf", {}, created_at="2026-07-21 09:15:00"),
+        ]
         volume = excel_service.calculate_invoice_volume(records)
-        self.assertEqual(len(volume), 1)
-        self.assertEqual(volume[0]["extraction_date"], date.today())
-        self.assertEqual(volume[0]["invoice_count"], 3)
+        self.assertEqual(volume, [
+            {"extraction_date": date(2026, 7, 21), "invoice_count": 1},
+            {"extraction_date": date(2026, 7, 23), "invoice_count": 2},
+        ])
         self.assertEqual(excel_service.calculate_invoice_volume([]), [])
+
+    def test_invoice_volume_keeps_records_with_unreadable_created_at(self):
+        volume = excel_service.calculate_invoice_volume([record(1, "a.pdf", {}, created_at="")])
+        self.assertEqual(volume, [{"extraction_date": date.today(), "invoice_count": 1}])
 
     def test_vendor_mix_uses_only_the_gstin_shown_in_extraction_log(self):
         # Vendor Mix must not re-parse or recover a GSTIN independently. A

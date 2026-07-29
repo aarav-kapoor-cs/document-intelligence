@@ -509,11 +509,27 @@ def calculate_validity_trend(extraction_rows: list) -> list:
 
 
 def calculate_invoice_volume(records) -> list:
-    # The report is an audit snapshot: the extraction date is the day the Excel
-    # is generated (today), and every invoice in the export is counted under it.
-    if not records:
-        return []
-    return [{"extraction_date": date.today(), "invoice_count": len(records)}]
+    """Invoices per day, dated by CreatedAt - the day the document was parsed.
+
+    The date comes from the database row, not from the day the Excel is
+    generated, so the sheet shows the real processing volume per day.
+    """
+    counts_by_day = defaultdict(int)
+    for record in records:
+        parsed_on = parse_date(record.get("createdAt"))
+        if parsed_on is None:
+            # CreatedAt is what the export query filters on, so this is rare.
+            # Count the record under today rather than dropping it, keeping the
+            # sheet's total equal to Total_Records on the AUDIT Period sheet.
+            logger.warning("Unreadable CreatedAt %r for %s; counted under today",
+                           record.get("createdAt"), record.get("fileName", ""))
+            parsed_on = date.today()
+        counts_by_day[parsed_on] += 1
+
+    return [
+        {"extraction_date": day, "invoice_count": counts_by_day[day]}
+        for day in sorted(counts_by_day)
+    ]
 
 
 def calculate_vendor_mix_from_extraction_log(extraction_rows: list) -> list:
