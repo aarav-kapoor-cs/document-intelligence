@@ -8,7 +8,7 @@ from datetime import date, datetime
 
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 import ocr_service
 
@@ -55,6 +55,23 @@ REFERENCE_NAMES = {
     "CustomerTaxId": "Customer GSTIN",
     "CustomerGSTIN": "Customer GSTIN",
     "Items": "Line Items",
+}
+
+# The validity bands from the mentor's template. Each entry is
+# (minimum validity, rating shown per row, legend line shown below the data).
+# Ordered high to low - the first band a row reaches wins. The per-row rating
+# and the legend both come from here, so the two can never drift apart.
+VALIDITY_BANDS = (
+    (0.95, "Excellent", "Excellent: >= 95%"),
+    (0.90, "Acceptable", "Acceptable: 90% - 94.99%"),
+    (0.00, "Needs Attention", "Needs Attention: < 90%"),
+)
+
+# Excel's built-in Good / Neutral / Bad colours: (fill, font) per rating.
+VALIDITY_FILLS = {
+    "Excellent": ("C6EFCE", "006100"),
+    "Acceptable": ("FFEB9C", "9C6500"),
+    "Needs Attention": ("FFC7CE", "9C0006"),
 }
 
 # A GSTIN is 15 characters: state code, PAN, entity code, "Z", checksum.
@@ -401,6 +418,14 @@ def is_valid_field_value(field_name: str, field_value: str) -> bool:
     return True
 
 
+def validity_rating(validity_percent: float) -> str:
+    """Grade a validity percentage against the template's recommended thresholds."""
+    for minimum, rating, _legend in VALIDITY_BANDS:
+        if validity_percent >= minimum:
+            return rating
+    return VALIDITY_BANDS[-1][1]
+
+
 def build_extraction_log_rows(records, doc_type: str) -> list:
     label = DOC_TYPE_LABELS.get(doc_type, doc_type)
     parsed_records = []
@@ -504,6 +529,7 @@ def calculate_validity_trend(extraction_rows: list) -> list:
             "pass_count": stats["pass"],
             "fail_count": stats["fail"],
             "validity_percent": validity,
+            "recommended_threshold": validity_rating(validity),
         })
     return result
 
@@ -647,19 +673,27 @@ def build_workbook(rows, from_date, to_date, doc_type):
     validity_rows = calculate_validity_trend(extraction_rows)
     logger.info("Export: %d validity row(s) generated", len(validity_rows))
     validity = workbook.create_sheet("VALIDITY TREND")
-    _add_header(validity, ["Field_Type", "Type ", "Pass_Count", "Fail_Count", "Validity_Percent"])
+    _add_header(validity, [
+        "Field_Type", "Type ", "Pass_Count", "Fail_Count", "Validity_Percent",
+        "Recommended Threshold",
+    ])
     for item in validity_rows:
         validity.append([
             item["field_type"], item["type"], item["pass_count"], item["fail_count"],
-            item["validity_percent"],
+            item["validity_percent"], item["recommended_threshold"],
         ])
         validity.cell(validity.max_row, 5).number_format = "0.00%"
+        # Colour the rating so weak fields stand out without reading every number.
+        fill_colour, font_colour = VALIDITY_FILLS[item["recommended_threshold"]]
+        rating_cell = validity.cell(validity.max_row, 6)
+        rating_cell.fill = PatternFill("solid", start_color=fill_colour, end_color=fill_colour)
+        rating_cell.font = Font(color=font_colour)
+    # The legend below the data is the key explaining the ratings above.
     validity.append([])
     validity.append(["Recommended Threshold"])
     validity[validity.max_row][0].font = Font(bold=True)
-    validity.append(["Excellent: >= 95%"])
-    validity.append(["Acceptable: 90% - 94.99%"])
-    validity.append(["Needs Attention: < 90%"])
+    for _minimum, _rating, legend in VALIDITY_BANDS:
+        validity.append([legend])
 
     volume = workbook.create_sheet("Invoice Volume")
     _add_header(volume, ["Extraction_Date", "Invoice_Count"])

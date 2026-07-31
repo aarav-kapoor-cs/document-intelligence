@@ -193,6 +193,31 @@ class TrendAndMixTests(unittest.TestCase):
         validity = {v["field_type"]: v for v in excel_service.calculate_validity_trend(rows)}
         self.assertEqual(validity["Base Amount"]["validity_percent"], 0.5)
 
+    def test_validity_rating_matches_the_recommended_thresholds(self):
+        # The band edges from the template: >= 95% Excellent, 90-94.99%
+        # Acceptable, below 90% Needs Attention.
+        for percent, expected in [
+            (1.0, "Excellent"),
+            (0.95, "Excellent"),
+            (0.9499, "Acceptable"),
+            (0.90, "Acceptable"),
+            (0.8999, "Needs Attention"),
+            (0.0, "Needs Attention"),
+        ]:
+            self.assertEqual(excel_service.validity_rating(percent), expected, percent)
+
+    def test_validity_trend_rows_carry_their_rating(self):
+        records = [
+            record(1, "a.pdf", {"InvoiceId": wrap("INV-1"), "SubTotal": wrap("100")}),
+            record(2, "b.pdf", {"InvoiceId": wrap("INV-2"), "SubTotal": wrap("not a number")}),
+        ]
+        rows = excel_service.build_extraction_log_rows(records, "prebuilt-invoice")
+        validity = {v["field_type"]: v for v in excel_service.calculate_validity_trend(rows)}
+        self.assertEqual(validity["Invoice Id"]["validity_percent"], 1.0)
+        self.assertEqual(validity["Invoice Id"]["recommended_threshold"], "Excellent")
+        self.assertEqual(validity["Base Amount"]["validity_percent"], 0.5)
+        self.assertEqual(validity["Base Amount"]["recommended_threshold"], "Needs Attention")
+
     def test_invoice_volume_counts_per_created_at_day(self):
         # Each invoice is counted under the day it was parsed (CreatedAt),
         # not under the day the report is generated.
@@ -260,6 +285,7 @@ class WorkbookTests(unittest.TestCase):
         log_headers = [c.value for c in wb["AI EXTRACTION LOG"][1]]
         self.assertEqual(log_headers[3], "Field_Name(Keys from json) ")  # template quirk
         self.assertEqual([c.value for c in wb["VALIDITY TREND"][1]][1], "Type ")  # template quirk
+        self.assertEqual(wb["VALIDITY TREND"]["F1"].value, "Recommended Threshold")
         self.assertEqual(wb["Invoice Volume"]["A1"].value, "Extraction_Date")
 
     def test_dates_and_percents_formatted(self):
@@ -280,6 +306,31 @@ class WorkbookTests(unittest.TestCase):
         # Every data row's UserEdit cell must be empty, not a number.
         for r in range(2, sheet.max_row + 1):
             self.assertIn(sheet.cell(r, 5).value, (None, ""))
+
+    def test_validity_threshold_column_is_rated_and_coloured(self):
+        # One field passes every time, one fails half the time.
+        wb = self.build([
+            record(1, "a.pdf", {"InvoiceId": wrap("INV-1"), "SubTotal": wrap("100")}),
+            record(2, "b.pdf", {"InvoiceId": wrap("INV-2"), "SubTotal": wrap("not a number")}),
+        ])
+        sheet = wb["VALIDITY TREND"]
+        ratings = {}
+        for r in range(2, sheet.max_row + 1):
+            if sheet.cell(r, 6).value:
+                ratings[sheet.cell(r, 1).value] = sheet.cell(r, 6)
+
+        excellent = ratings["Invoice Id"]
+        self.assertEqual(excellent.value, "Excellent")
+        self.assertTrue(excellent.fill.start_color.rgb.endswith("C6EFCE"))
+        attention = ratings["Base Amount"]
+        self.assertEqual(attention.value, "Needs Attention")
+        self.assertTrue(attention.fill.start_color.rgb.endswith("FFC7CE"))
+
+        # The legend below the data is still the key for those ratings.
+        column_a = [sheet.cell(r, 1).value for r in range(1, sheet.max_row + 1)]
+        self.assertEqual(column_a[-4:], [
+            "Recommended Threshold", "Excellent: >= 95%",
+            "Acceptable: 90% - 94.99%", "Needs Attention: < 90%"])
 
     def test_empty_export_still_builds_all_sheets(self):
         wb = self.build([])
