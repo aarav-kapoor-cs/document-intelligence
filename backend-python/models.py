@@ -47,3 +47,29 @@ class ExportRequest(BaseModel):
     from_date: str = ""  # "YYYY-MM-DD"
     to_date: str = ""    # "YYYY-MM-DD"
     doc_type: str = "prebuilt-invoice"
+
+
+# --- the search explorer at /search ---
+
+# One question, run through the retrieval pipeline. Empty grain or sheet means
+# no filter. `answer` turns on the RAG step, which costs an extra model call.
+# `top` is left unset on purpose: RAG needs far more context than plain
+# retrieval does, so the endpoint fills it in the same way the CLI does.
+class SearchRequest(BaseModel):
+    question: str = ""
+    grain: str = ""   # "document", "field", or "" for both
+    sheet: str = ""   # a sheet name, or "" for all three
+    top: int | None = None
+    answer: bool = False
+
+
+# The same question run four ways, so the methods can be compared side by side.
+class CompareRequest(BaseModel):
+    question: str = ""
+    grain: str = "document"
+    top: int = 5
+
+
+# A question for the Semantic Kernel agent, which picks its own tools.
+class AgentRequest(BaseModel):
+    question: str = ""

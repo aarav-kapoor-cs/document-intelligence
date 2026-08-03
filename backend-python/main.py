@@ -12,6 +12,7 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 import database
 import ocr_service
@@ -44,6 +45,24 @@ try:
     print("DATABASE: using", database.describe())
 except Exception as ex:
     print("WARNING: could not prepare the database at startup:", ex)
+
+# The search explorer. Imported after load_dotenv above, because search_api pulls
+# in pipeline.py which reads the Azure keys at import time. Kept optional: the
+# document and Excel pages must still work on a machine where the search
+# libraries are not installed or the workbook is missing.
+try:
+    import search_api
+
+    app.include_router(search_api.router)
+
+    @app.get("/search")
+    def search_page():
+        """The pipeline explorer — chunks, retrieval comparison, RAG, agent."""
+        return FileResponse(Path(__file__).with_name("static") / "search.html")
+
+    print("SEARCH: explorer at http://localhost:8001/search")
+except Exception as ex:
+    print("WARNING: the search explorer is unavailable:", ex)
 
 
 def _save(file_name, model, prompt, text, fields, ai_json, answer, tokens, prompt_id):

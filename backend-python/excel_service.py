@@ -117,6 +117,8 @@ DOCUMENT_NUMBER_KEYS = (
     "Transaction ID",
 )
 
+# Tried in order, first match wins - so anything ambiguous is decided by whatever
+# sits higher up. Append here; do not insert.
 DATE_FORMATS = (
     "%Y-%m-%d",
     "%d/%m/%Y",
@@ -126,6 +128,13 @@ DATE_FORMATS = (
     "%d %b' %Y",
     "%d-%b-%y",
     "%d%b-%y",
+    "%d-%b-%Y",     # 30-Jul-2025 - same as %d-%b-%y but a four-digit year.
+    "%d %B, %Y",    # 06 MARCH, 2004 - a comma after the month name.
+    "%d %b, %Y",    # 06 Mar, 2004
+    # 12/15/2019 - month-first, from a US invoice. This has to stay LAST:
+    # %d/%m/%Y is higher up, so day-first still wins anything that could be read
+    # either way, and 11/06/2025 keeps meaning 11 June rather than 6 November.
+    "%m/%d/%Y",
 )
 
 

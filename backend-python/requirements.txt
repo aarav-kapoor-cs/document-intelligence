@@ -13,3 +13,23 @@ openai==2.46.0
 python-dotenv==1.2.2
 pyodbc==5.3.0
 openpyxl==3.1.5
+
+# openpyxl writes the audit workbook; pandas reads it back for the search
+# chunker. Pinned to 2.x on purpose: pandas 3.x needs Python 3.11+ and changes
+# how blank cells become NA, which the chunker relies on.
+pandas==2.3.3
+
+# --- Search, agents, and the anomaly detector ---
+# azure-search-documents: the Azure AI Search index (vector + hybrid + semantic ranking)
+# semantic-kernel:        orchestrates the tools in tools.py and runs the agent
+# mcp:                    exposes those same tools to outside clients (Claude Desktop, VS Code)
+# numpy:                  the median/MAD statistics behind the anomaly detector
+# None of these change the pinned openai version above.
+azure-search-documents==12.0.0
+semantic-kernel==1.44.0
+# Must stay on 1.x. semantic-kernel 1.44 asks for "mcp>=1.26.0" with no upper
+# bound, but mcp 2.0 renamed streamablehttp_client and deleted
+# mcp.client.websocket, so importing semantic_kernel.connectors.mcp raises
+# ImportError. 1.29.0 is the newest 1.x.
+mcp==1.29.0
+numpy==2.5.1

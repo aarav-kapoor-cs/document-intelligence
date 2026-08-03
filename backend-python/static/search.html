@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit search explorer</title>
+<style>
+  /* Same visual language as the Angular app (src/styles.css) so this reads as
+     part of the same product. Deliberately NOT capped at 800px: the four-way
+     comparison needs the width, which is why this page is not in that app. */
+  :root { --brand: #1a4d8f; --line: #ddd; --bg: #fafafa; --warn: #b26b00; --err: #b00020; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0 24px 48px;
+         color: #222; line-height: 1.5; }
+  header { padding: 20px 0 8px; border-bottom: 2px solid var(--brand); margin-bottom: 4px; }
+  h1 { color: var(--brand); margin: 0 0 4px; font-size: 22px; }
+  .sub { color: #666; font-size: 14px; }
+  nav { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; }
+  nav button { background: #eef2f8; color: var(--brand); border: 1px solid #cfdcee;
+               padding: 8px 16px; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 14px; }
+  nav button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+  button.go { background: var(--brand); color: #fff; border: none; padding: 8px 16px;
+              border-radius: 4px; cursor: pointer; }
+  button.go:hover { background: #16407a; }
+  button.go:disabled { background: #9bb0cc; cursor: default; }
+  input[type=text], select { padding: 7px 9px; border: 1px solid #bbb; border-radius: 4px;
+                             font-size: 14px; font-family: inherit; }
+  input[type=text] { min-width: 340px; flex: 1; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px;
+          margin: 10px 0; background: var(--bg); }
+  .card:target { border-color: var(--brand); background: #eef4fc; }
+  .chunk-id { font-family: ui-monospace, Menlo, monospace; color: var(--brand);
+              font-weight: 600; font-size: 13px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+         background: #e6ecf5; color: #33517a; margin-left: 6px; }
+  .tag.doc { background: #e8f3e8; color: #2c6b2c; }
+  .score { float: right; font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #555; }
+  .content { font-size: 13px; color: #333; margin-top: 6px; }
+  .cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .col h3 { margin: 0 0 6px; font-size: 13px; color: var(--brand); text-transform: uppercase;
+            letter-spacing: .04em; }
+  .col .card { padding: 8px 10px; margin: 6px 0; }
+  .mini { font-size: 12px; }
+  .same { font-size: 12px; color: var(--warn); background: #fff7e6; padding: 2px 8px;
+          border-radius: 3px; display: inline-block; }
+  .diff { font-size: 12px; color: #2c6b2c; background: #edf7ed; padding: 2px 8px;
+          border-radius: 3px; display: inline-block; }
+  pre.answer { white-space: pre-wrap; background: #fff; border: 1px solid var(--line);
+               border-left: 3px solid var(--brand); padding: 12px 14px; border-radius: 4px;
+               font-family: inherit; font-size: 14px; }
+  .cite { color: var(--brand); cursor: pointer; text-decoration: underline dotted; }
+  .step { border-left: 3px solid var(--brand); padding: 6px 12px; margin: 8px 0; background: #fff; }
+  .step.result { border-left-color: #2c6b2c; }
+  .step .what { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .err { color: var(--err); }
+  .note { color: var(--warn); background: #fff7e6; padding: 8px 12px; border-radius: 4px;
+          font-size: 13px; margin: 8px 0; }
+  .muted { color: #777; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid #eee; }
+  th { background: #f0f4fa; color: var(--brand); }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Audit search explorer</h1>
+  <div class="sub" id="status">loading…</div>
+</header>
+
+<nav>
+  <button data-tab="chunks" class="on">Chunks</button>
+  <button data-tab="compare">Compare methods</button>
+  <button data-tab="ask">Ask (RAG)</button>
+  <button data-tab="agent">Agent</button>
+</nav>
+
+<!-- 1. What is actually in the index -->
+<section id="tab-chunks">
+  <div class="row">
+    <select id="c-sheet"><option value="">All sheets</option></select>
+    <select id="c-grain">
+      <option value="">Both grains</option>
+      <option value="document">document</option>
+      <option value="field">field</option>
+    </select>
+    <input type="text" id="c-find" placeholder="filter text…">
+    <span class="muted" id="c-count"></span>
+  </div>
+  <div id="c-list"></div>
+</section>
+
+<!-- 2. The same question, four ways -->
+<section id="tab-compare" class="hide">
+  <div class="row">
+    <input type="text" id="m-q" value="documents where the tax number did not come through">
+    <select id="m-grain">
+      <option value="document">document chunks</option>
+      <option value="field">field chunks</option>
+      <option value="">both</option>
+    </select>
+    <button class="go" id="m-go">Compare</button>
+  </div>
+  <div class="muted">Keyword is BM25. Vector is cosine over embeddings. Hybrid merges both
+    by Reciprocal Rank Fusion. The fourth adds the semantic reranker on top.</div>
+  <div id="m-out"></div>
+</section>
+
+<!-- 3. Retrieval plus a grounded answer -->
+<section id="tab-ask" class="hide">
+  <div class="row">
+    <input type="text" id="a-q" value="which fields are extracting badly">
+    <select id="a-grain">
+      <option value="field">field chunks</option>
+      <option value="document">document chunks</option>
+      <option value="">both</option>
+    </select>
+    <select id="a-top">
+      <option>5</option><option selected>15</option><option>30</option>
+    </select>
+    <button class="go" id="a-go">Ask</button>
+  </div>
+  <div id="a-out"></div>
+</section>
+
+<!-- 4. The agent choosing its own tools -->
+<section id="tab-agent" class="hide">
+  <div class="row">
+    <input type="text" id="g-q" value="how many documents are missing the vendor GSTIN">
+    <button class="go" id="g-go">Run agent</button>
+  </div>
+  <div class="muted">The agent picks a tool: <b>count_documents</b> for exact counts,
+    <b>search_chunks</b> for open questions, <b>get_document</b> for one invoice,
+    <b>field_applicability</b> to check whether a low figure is a real gap.</div>
+  <div id="g-out"></div>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  ["chunks", "compare", "ask", "agent"].forEach(t =>
+    $("tab-" + t).classList.toggle("hide", t !== b.dataset.tab));
+});
+
+async function api(path, body) {
+  const res = await fetch(path, body ? {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  } : {});
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+  return data;
+}
+
+// --- status -------------------------------------------------------------
+api("/api/search/status").then(s => {
+  const idx = Object.entries(s.indexes || {})
+    .map(([n, v]) => `${n}: ${v.error ? "unavailable" : v.documents + " docs"}`).join(" · ");
+  $("status").innerHTML = `${esc(s.workbook || "no workbook")} — ${s.chunks} chunks · ${esc(idx)}`
+    + (s.embeddings_configured ? "" : ' <span class="same">embeddings off</span>');
+  if ((s.notes || []).length) {
+    $("status").innerHTML += `<div class="note">${s.notes.map(esc).join("<br>")}</div>`;
+  }
+}).catch(e => $("status").innerHTML = `<span class="err">${esc(e.message)}</span>`);
+
+// --- 1. chunks ----------------------------------------------------------
+let ALL = [];
+function chunkCard(c, anchor) {
+  return `<div class="card" ${anchor ? `id="chunk-${esc(c.id)}"` : ""}>
+    <span class="chunk-id">${esc(c.id)}</span>
+    <span class="tag ${c.grain === "document" ? "doc" : ""}">${esc(c.grain)}</span>
+    <span class="tag">${esc(c.sheet)}</span>
+    ${c.score !== undefined ? `<span class="score">${c.score.toFixed(2)} <span class="muted">${esc(c.scored_by || "")}</span></span>` : ""}
+    <div class="content">${esc(c.content)}</div></div>`;
+}
+function renderChunks() {
+  const sheet = $("c-sheet").value, grain = $("c-grain").value;
+  const find = $("c-find").value.trim().toLowerCase();
+  const shown = ALL.filter(c =>
+    (!sheet || c.sheet === sheet) && (!grain || c.grain === grain) &&
+    (!find || (c.content + c.id + c.entity).toLowerCase().includes(find)));
+  $("c-count").textContent = `${shown.length} of ${ALL.length}`;
+  $("c-list").innerHTML = shown.map(c => chunkCard(c, true)).join("") ||
+    '<p class="muted">Nothing matches.</p>';
+}
+api("/api/search/chunks").then(d => {
+  ALL = d.chunks;
+  Object.keys(d.by_sheet).forEach(s =>
+    $("c-sheet").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+  renderChunks();
+}).catch(e => $("c-list").innerHTML = `<p class="err">${esc(e.message)}</p>`);
+["c-sheet", "c-grain", "c-find"].forEach(id => $(id).oninput = renderChunks);
+
+// --- 2. compare ---------------------------------------------------------
+$("m-go").onclick = async () => {
+  $("m-go").disabled = true;
+  $("m-out").innerHTML = '<p class="muted">running four searches…</p>';
+  try {
+    const d = await api("/api/search/compare",
+      { question: $("m-q").value, grain: $("m-grain").value, top: 5 });
+    $("m-out").innerHTML = '<div class="cols">' + Object.entries(d.methods).map(([name, hits]) => `
+      <div class="col"><h3>${esc(name)}</h3>
+      ${name === "keyword" ? "" :
+        `<span class="${d.same_as_keyword[name] ? "same" : "diff"}">${
+          d.same_as_keyword[name] ? "same order as keyword" : "different order"}</span>`}
+      ${hits.map(h => `<div class="card mini">
+        <span class="chunk-id">${esc(h.entity)}</span>
+        <span class="score">${h.score.toFixed(2)}</span>
+        <div class="muted" style="font-size:11px">${esc(h.id)}</div></div>`).join("")}
+      </div>`).join("") + "</div>";
+  } catch (e) { $("m-out").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  $("m-go").disabled = false;
+};
+
+// --- 3. ask (RAG) -------------------------------------------------------
+$("a-go").onclick = async () => {
+  $("a-go").disabled = true;
+  $("a-out").innerHTML = '<p class="muted">retrieving, then asking the model…</p>';
+  try {
+    const d = await api("/api/search/ask", {
+      question: $("a-q").value, grain: $("a-grain").value,
+      top: Number($("a-top").value), answer: true,
+    });
+    // Turn every [chunk-id] in the answer into a link down to that chunk, so a
+    // claim can be checked against the text it came from in one click.
+    const cited = esc(d.answer || "(no answer)").replace(/\[([a-z0-9\-]+)\]/g,
+      (m, id) => `<a class="cite" href="#hit-${id}">[${id}]</a>`);
+    $("a-out").innerHTML = `<pre class="answer">${cited}</pre>
+      <p class="muted">${d.hits.length} chunk(s) given to the model:</p>` +
+      d.hits.map(h => `<div class="card" id="hit-${esc(h.id)}">
+        <span class="chunk-id">${esc(h.id)}</span>
+        <span class="tag ${h.grain === "document" ? "doc" : ""}">${esc(h.grain)}</span>
+        <span class="score">${h.score.toFixed(2)} <span class="muted">${esc(h.scored_by)}</span></span>
+        <div class="content">${esc(h.content)}</div></div>`).join("");
+  } catch (e) { $("a-out").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  $("a-go").disabled = false;
+};
+
+// --- 4. agent -----------------------------------------------------------
+$("g-go").onclick = async () => {
+  $("g-go").disabled = true;
+  $("g-out").innerHTML = '<p class="muted">the agent is choosing a tool…</p>';
+  try {
+    const d = await api("/api/search/agent", { question: $("g-q").value });
+    const steps = (d.trace || []).map(s => s.type === "call"
+      ? `<div class="step"><div class="what">→ ${esc(s.tool)}(${
+          Object.entries(s.arguments).map(([k, v]) => `${esc(k)}=${esc(JSON.stringify(v))}`).join(", ")
+        })</div></div>`
+      : `<div class="step result"><div class="muted">returned</div>
+         <div class="content">${esc(s.result).slice(0, 900)}</div></div>`).join("");
+    $("g-out").innerHTML = (steps || '<p class="note">No tool was called — the model answered unaided.</p>')
+      + `<pre class="answer">${esc(d.answer)}</pre>`;
+  } catch (e) { $("g-out").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  $("g-go").disabled = false;
+};
+</script>
+</body>
+</html>

@@ -50,6 +50,12 @@ Thumbs.db
 **/*.db-shm
 **/*.db-wal
 
+# Audit workbooks hold real vendor names, GSTINs and invoice values, and
+# chunks.json holds the same values extracted into text.
+*.xlsx
+*.xls
+chunks.json
+
 # Python
 __pycache__/
 *.pyc
