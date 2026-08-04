@@ -277,16 +277,33 @@ export class App {
 
   // How many chunks are indexed and which workbook they came from, so a stale
   // index is visible rather than something you discover from a wrong answer.
+  // This takes a few seconds: the backend re-reads the workbook and makes a real
+  // embedding call to check that half is configured, so say so rather than
+  // leaving the line blank and looking frozen.
   loadIndexStatus() {
+    this.indexStatus = 'Checking the search index...';
+    this.cd.detectChanges();
     this.http.get<any>(backendUrl + '/api/search/status').subscribe({
       next: (r) => {
         this.indexStatus = r.chunks
           ? r.chunks + ' chunks indexed, from ' + (r.workbook || 'an unknown workbook')
           : 'No chunks indexed yet - export the Excel report to build the index.';
+        // notes carry the exact reason a piece is unconfigured, e.g. an
+        // embedding model that exists in the region but is not deployed.
+        if (r.notes?.length) {
+          this.indexStatus += ' (' + r.notes[0] + ')';
+        }
         this.cd.detectChanges();
       },
-      error: () => {
-        this.indexStatus = 'The search index status could not be read.';
+      error: (err) => {
+        // status 0 means the request never arrived - almost always the backend
+        // not running. Saying that outright beats "could not be read", which
+        // sends you looking at Azure when the problem is a stopped terminal.
+        this.indexStatus =
+          err.status === 0
+            ? 'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).'
+            : 'The search index status could not be read: ' +
+              (err.error?.detail || 'HTTP ' + err.status) + '.';
         this.cd.detectChanges();
       },
     });
