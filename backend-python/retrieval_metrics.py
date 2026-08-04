@@ -6,10 +6,10 @@ question is "which documents are missing the vendor GSTIN", SQL over the
 extraction log knows the exact answer, so recall can be counted rather than
 eyeballed.
 
-    python evaluate.py            # all four methods, mean recall@5
-    python evaluate.py --top 10   # same at a wider cutoff
+    python retrieval_metrics.py            # all four methods, mean recall@5
+    python retrieval_metrics.py --top 10   # same at a wider cutoff
 
-Needs the vector index built:  python pipeline.py build
+Needs the vector index built:  python hybrid_search.py build
 
 Written after a single query suggested vector search beat keyword search 3/5 to
 2/5. Across five queries it does not, and that first result was noise. One query
@@ -20,8 +20,8 @@ import argparse
 
 from azure.search.documents.models import VectorizedQuery
 
-import boundary
-import pipeline
+import sql_comparison
+import hybrid_search
 
 # Questions phrased the way a person would ask them, deliberately avoiding the
 # wording the chunks use. Each pairs with the field whose absence defines the
@@ -47,7 +47,7 @@ def gold_set(connection, field):
 
 def search_variants(question, top):
     """The same question run four ways."""
-    vector = [VectorizedQuery(vector=pipeline.embed([question])[0],
+    vector = [VectorizedQuery(vector=hybrid_search.embed([question])[0],
                               k_nearest_neighbors=50, fields="content_vector")]
     return {
         "keyword": dict(search_text=question),
@@ -55,18 +55,18 @@ def search_variants(question, top):
         "hybrid": dict(search_text=question, vector_queries=vector),
         "hybrid+rerank": dict(search_text=question, vector_queries=vector,
                               query_type="semantic",
-                              semantic_configuration_name=pipeline.SEMANTIC_CONFIG),
+                              semantic_configuration_name=hybrid_search.SEMANTIC_CONFIG),
     }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="evaluate.py", description="Compare retrieval methods against SQL ground truth.")
+        prog="retrieval_metrics.py", description="Compare retrieval methods against SQL ground truth.")
     parser.add_argument("--top", type=int, default=5, help="cutoff for recall@k (default 5)")
     args = parser.parse_args()
 
-    connection = boundary.load_table()
-    client = pipeline.search_client()
+    connection = sql_comparison.load_table()
+    client = hybrid_search.search_client()
     totals = dict.fromkeys(METHODS, 0.0)
 
     # Kept under 80 columns on purpose — wider than that and the row wraps in a
@@ -97,7 +97,7 @@ def main():
 Read this before concluding anything about the methods: every one of these
 questions is "find the documents where field X is empty", which is a WHERE
 clause wearing a sentence. SQL answers all of them exactly and instantly —
-see boundary.py. Weak numbers here are the retrieval layer being asked the
+see sql_comparison.py. Weak numbers here are the retrieval layer being asked the
 wrong kind of question, not the retrieval layer being broken.""")
 
 

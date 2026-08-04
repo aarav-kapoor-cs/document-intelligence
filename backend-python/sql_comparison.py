@@ -7,8 +7,8 @@ question falls on is most of what makes a retrieval layer useful.
 This script asks the same questions two ways and prints both answers side by
 side, so the boundary is something you have seen rather than been told.
 
-    python boundary.py                    # the paired demonstrations
-    python boundary.py --sql "SELECT ..." # ad-hoc SQL against the extraction log
+    python sql_comparison.py                    # the paired demonstrations
+    python sql_comparison.py --sql "SELECT ..." # ad-hoc SQL against the extraction log
 
 It contacts nothing and costs nothing. The SQL runs against an in-memory SQLite
 table loaded from the AI EXTRACTION LOG sheet, so both halves describe exactly
@@ -25,9 +25,9 @@ import argparse
 import sqlite3
 import textwrap
 
-# phase1.py owns reading the workbook, including stripping the trailing spaces
+# keyword_search.py owns reading the workbook, including stripping the trailing spaces
 # off the two quirky column headers. Reuse it rather than repeating the fix.
-from phase1 import COMP_SHEET, LOG_SHEET, VAL_SHEET, sheet
+from keyword_search import COMP_SHEET, LOG_SHEET, VAL_SHEET, sheet
 
 # The workbook's headers are not valid SQL identifiers, so they are renamed once,
 # here, and every query below speaks these names.
@@ -46,7 +46,7 @@ COLUMNS = {
 def load_table():
     """The extraction log as a real SQL table, in memory."""
     frame = sheet(LOG_SHEET)[list(COLUMNS)].rename(columns=COLUMNS)
-    # The same guard phase1.py uses: a document ingested twice would double every
+    # The same guard keyword_search.py uses: a document ingested twice would double every
     # count below without raising anything.
     frame = frame.drop_duplicates(subset=["number", "source_file", "field_key"])
 
@@ -129,7 +129,7 @@ def demo(title, question, verdict, query, connection, search_says):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="boundary.py",
+        prog="sql_comparison.py",
         description="Show which questions belong to search and which belong to SQL.")
     parser.add_argument("--sql", help="run one query against extraction_log and stop")
     parser.add_argument("--check", action="store_true",

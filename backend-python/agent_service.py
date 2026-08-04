@@ -39,9 +39,9 @@ from semantic_kernel.contents import (
 )
 from semantic_kernel.functions import kernel_function
 
-import boundary
-import phase1
-import pipeline
+import sql_comparison
+import keyword_search
+import hybrid_search
 
 load_dotenv(Path(__file__).with_name(".env"))
 
@@ -55,7 +55,7 @@ MAX_TOP = 1000
 
 # Everything the model may count. A field name from this list is substituted into
 # a parameterised query; a model-authored SQL fragment never reaches the database.
-COUNTABLE_FIELDS = tuple(sorted(set(phase1.CORE_FIELDS) | {
+COUNTABLE_FIELDS = tuple(sorted(set(keyword_search.CORE_FIELDS) | {
     "Amount Due", "Due Date", "Payment Term", "Purchase Order", "Customer Id",
     "Billing Address", "Shipping Address", "Remittance Address", "Service Address",
     "Previous Unpaid Balance", "Vendor Fax Number", "Vendor Phone Number",
@@ -104,7 +104,7 @@ class AuditTools:
                                "countable_fields": list(COUNTABLE_FIELDS)})
 
         def run():
-            connection = boundary.load_table()
+            connection = sql_comparison.load_table()
             rows = connection.execute(
                 "SELECT number FROM extraction_log "
                 "WHERE field_name = ? AND completeness_flag = 'N' ORDER BY number",
@@ -128,7 +128,7 @@ class AuditTools:
         top: Annotated[int, "How many chunks to return. Ask for more than you "
                             "think you need: a question about fields in general "
                             "needs most of them, not the closest few."]
-             = pipeline.RAG_CONTEXT,
+             = hybrid_search.RAG_CONTEXT,
     ) -> Annotated[str, "JSON list of {id, entity, sheet, content}."]:
         # The model picks this number, so it has to survive a bad pick. Azure
         # answers top=0 with an empty list rather than an error, which would
@@ -137,11 +137,11 @@ class AuditTools:
         top = max(1, min(top, MAX_TOP))
 
         def run():
-            results = pipeline.search_client().search(
+            results = hybrid_search.search_client().search(
                 search_text=query,
-                filter=pipeline.odata_filter(None, grain or None),
+                filter=hybrid_search.odata_filter(None, grain or None),
                 query_type="semantic",
-                semantic_configuration_name=pipeline.SEMANTIC_CONFIG,
+                semantic_configuration_name=hybrid_search.SEMANTIC_CONFIG,
                 select=["id", "sheet", "grain", "entity", "content"],
                 top=top,
             )
@@ -158,7 +158,7 @@ class AuditTools:
         number: Annotated[str, "The invoice number, e.g. 'PSV/1650'."],
     ) -> Annotated[str, "JSON for that one document, or a not-found note."]:
         def run():
-            results = list(pipeline.search_client().search(
+            results = list(hybrid_search.search_client().search(
                 search_text=number, filter="grain eq 'document'",
                 select=["id", "entity", "content"], top=5))
             for hit in results:
@@ -179,7 +179,7 @@ class AuditTools:
         self,
         field: Annotated[str, "Exact field name, e.g. 'Vendor Fax Number'."],
     ) -> Annotated[str, "JSON saying core or optional, and what that implies."]:
-        core = field in phase1.CORE_FIELDS
+        core = field in keyword_search.CORE_FIELDS
         return json.dumps({
             "field": field,
             "classification": "core" if core else "optional",

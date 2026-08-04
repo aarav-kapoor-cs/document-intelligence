@@ -1,17 +1,17 @@
-"""Phase 1 — make the invoice audit workbook searchable with keyword search.
+"""Phase 2 — the same thing, with vectors.
 
 Reads the six-sheet audit workbook, turns three of its sheets into chunks of
-plain English, and pushes them into Azure AI Search. Retrieval here is BM25
-keyword matching plus the semantic ranker. There are no embeddings, so this
-needs an Azure AI Search key and nothing else.
+plain English, and pushes them into Azure AI Search. Retrieval here is hybrid:
+BM25 keyword matching AND vector similarity, merged by Reciprocal Rank Fusion,
+then reordered by the semantic ranker. Needs an Azure OpenAI embedding
+deployment as well as an Azure AI Search key.
 
-    python phase1.py chunks       # no Azure needed, prints what would be uploaded
-    python phase1.py build        # creates the index and uploads
-    python phase1.py ask "which fields are extracting badly"
+    python hybrid_search.py chunks     # no Azure needed, prints what would be uploaded
+    python hybrid_search.py build      # embeds, creates the index and uploads
+    python hybrid_search.py ask "which fields are extracting badly" --answer
 
-FROZEN. Once pipeline.py has been copied from this file, this one is never
-edited again. `diff phase1.py pipeline.py` is the entire vector feature, and
-that diff is the point.
+Generated from keyword_search.py. `diff keyword_search.py hybrid_search.py` is the entire vector
+feature and nothing else — the chunking, the RAG step and the CLI are identical.
 """
 
 import argparse
@@ -37,8 +37,17 @@ from azure.search.documents.indexes.models import (
     SemanticPrioritizedFields,
     SemanticSearch,
     SimpleField,
+    # --- the vector half ---
+    HnswAlgorithmConfiguration,
+    HnswParameters,
+    SearchField,
+    VectorSearch,
+    VectorSearchAlgorithmMetric,
+    VectorSearchProfile,
 )
+from azure.search.documents.models import VectorizedQuery
 from dotenv import load_dotenv
+from openai import OpenAI, OpenAIError
 
 import ai_service
 
@@ -94,7 +103,7 @@ CORE_FIELDS = (
     "GST Amount", "Tax Details", "Line Items",
 )
 
-INDEX_NAME = os.getenv("AUDIT_SEARCH_INDEX", "audit-phase1")
+INDEX_NAME = os.getenv("AUDIT_HYBRID_INDEX", "audit-hybrid")
 SEMANTIC_CONFIG = "audit-semantic"
 
 # How many chunks --answer puts in front of the model when no --top is given.
@@ -131,6 +140,16 @@ the numbered chunks provided in the user message.
   the invoice never had one. Mention optional fields afterwards, separately and
   labelled as probably-not-applicable, or leave them out."""
 
+# The embedding model turns chunk text into ~1536 numbers. The numbers are a
+# position, not a code: sentences that mean similar things land near each other,
+# which is how meaning becomes distance. Use the DEPLOYMENT name from the
+# Deployments blade — a model that is merely available in the region gives an
+# "unknown_model" error that explains nothing.
+EMBED_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "")
+# Must match the deployed model: text-embedding-3-small is 1536,
+# text-embedding-3-large is 3072. A mismatch fails on every single upload.
+EMBED_DIMS = int(os.getenv("AUDIT_EMBED_DIMS", "1536"))
+
 
 # --------------------------------------------------------------------------
 # Reading the workbook
@@ -149,7 +168,7 @@ def workbook_path():
     found = glob.glob(os.path.join(here, "Audit_*.xlsx"))
     if not found:
         raise SystemExit(
-            "CHUNKS: no workbook found. Put an Audit_*.xlsx next to phase1.py, or "
+            "CHUNKS: no workbook found. Put an Audit_*.xlsx next to hybrid_search.py, or "
             "point AUDIT_XLSX at one in .env."
         )
     # Newest by modification time — the filenames are DDMMYYYY, so sorting them
@@ -498,6 +517,73 @@ def make_chunks():
 # Azure AI Search
 # --------------------------------------------------------------------------
 
+# A note on what is embedded, because the obvious optimisation does not work.
+#
+# The chunks share a lot of text: two document chunks have 73% of their
+# vocabulary in common, mean pairwise cosine 0.883, some pairs as high as 0.995.
+# The tempting conclusion is that verdict()'s pile of synonyms is flooding the
+# vector, and that embedding a leaner string would separate them. It was tried
+# and measured: mean cosine moved 0.883 -> 0.878 and the closest pair got *worse*
+# (0.995 -> 0.997). The similarity is not boilerplate — it is that all eighteen
+# documents genuinely are the same kind of thing, described with the same
+# thirty-three field names.
+#
+# High absolute similarity turns out not to matter much anyway. Ranking depends
+# on relative order, and vector search still beats keyword search on synonym
+# queries here. So `content` is embedded as-is.
+def embedding_client():
+    """The client for the embedding model.
+
+    The embedding model does not have to live in the same Azure OpenAI resource
+    as the chat model — here it does not. When AZURE_OPENAI_EMBEDDING_BASE_URL is
+    set, embeddings use their own endpoint and key; otherwise they fall back to
+    the chat resource via ai_service. Either way it is the plain OpenAI client
+    against a /openai/v1 base URL, never AzureOpenAI and never an api-version.
+    """
+    base_url = os.getenv("AZURE_OPENAI_EMBEDDING_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return ai_service.get_client()
+    if not base_url.endswith("/openai/v1"):
+        base_url += "/openai/v1"
+    return OpenAI(base_url=base_url, api_key=os.getenv("AZURE_OPENAI_EMBEDDING_KEY", ""))
+
+
+def embed(texts):
+    """Embed a list of strings. Order is preserved, so results zip back onto the input."""
+    configured = os.getenv("AZURE_OPENAI_EMBEDDING_BASE_URL", "").startswith("http")
+    if not EMBED_DEPLOYMENT or not (configured or ai_service.is_configured()):
+        raise SystemExit("The embedding model is not configured — set "
+                         "AZURE_OPENAI_EMBEDDING_DEPLOYMENT, and either "
+                         "AZURE_OPENAI_EMBEDDING_BASE_URL/_KEY or the main "
+                         "AZURE_OPENAI_BASE_URL/_KEY, in backend-python/.env.")
+    print(f"EMBED: {len(texts)} text(s) via {EMBED_DEPLOYMENT}...")
+    try:
+        response = embedding_client().embeddings.create(
+            model=EMBED_DEPLOYMENT, input=texts)
+    except OpenAIError as error:
+        # The name being set is not the same as the model being deployed. Every
+        # model in the region shows up in the catalogue; only the ones on the
+        # Deployments blade can actually be called.
+        if "unknown_model" in str(error) or "404" in str(error):
+            raise SystemExit(
+                f"EMBED: {EMBED_DEPLOYMENT!r} is not a deployment on this Azure "
+                f"OpenAI resource. Deploy an embedding model first — portal → "
+                f"Foundry → Deployments → Deploy model → text-embedding-3-small — "
+                f"then put the DEPLOYMENT name in AZURE_OPENAI_EMBEDDING_DEPLOYMENT. "
+                f"Being listed in the model catalogue is not the same as being "
+                f"deployed. keyword_search.py works without this."
+            ) from error
+        raise
+    vectors = [item.embedding for item in response.data]
+    # Checked here rather than at upload, so a wrong deployment fails once with a
+    # clear message instead of 84 times with a dimension error.
+    if vectors and len(vectors[0]) != EMBED_DIMS:
+        raise SystemExit(f"EMBED: {EMBED_DEPLOYMENT} returned {len(vectors[0])} "
+                         f"dimensions but the index expects {EMBED_DIMS}. Fix "
+                         f"AUDIT_EMBED_DIMS or point at the right deployment.")
+    return vectors
+
+
 def index_schema():
     """The index definition. SearchableField means keyword search looks inside the
     field; SimpleField means stored and filterable but never searched."""
@@ -521,6 +607,13 @@ def index_schema():
         # "extract" and make the demo query work for the wrong reason, hiding the
         # fact that verdict() is what makes these chunks findable.
         SearchableField(name="content", type=SearchFieldDataType.String),
+        # hidden=True keeps the vector out of query results. Retrieved, it would
+        # add 1536 floats of noise to every hit.
+        SearchField(name="content_vector",
+                    type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                    searchable=True, hidden=True,
+                    vector_search_dimensions=EMBED_DIMS,
+                    vector_search_profile_name="hnsw-profile"),
     ]
     semantic = SemanticSearch(
         default_configuration_name=SEMANTIC_CONFIG,
@@ -534,7 +627,16 @@ def index_schema():
             ),
         )],
     )
-    return SearchIndex(name=INDEX_NAME, fields=fields, semantic_search=semantic)
+    vectors = VectorSearch(
+        algorithms=[HnswAlgorithmConfiguration(
+            name="hnsw-config",
+            parameters=HnswParameters(m=4, ef_construction=400, ef_search=500,
+                                      metric=VectorSearchAlgorithmMetric.COSINE))],
+        profiles=[VectorSearchProfile(name="hnsw-profile",
+                                      algorithm_configuration_name="hnsw-config")],
+    )
+    return SearchIndex(name=INDEX_NAME, fields=fields, semantic_search=semantic,
+                       vector_search=vectors)
 
 
 def search_credentials():
@@ -585,18 +687,44 @@ def cmd_chunks(args):
         print(f"\n--- sample {grain} chunk: {sample['id']} ---\n{sample['content']}")
 
 
-def cmd_build(args):
-    """Create or update the index, then upload every chunk."""
+def delete_orphans(client, keep):
+    """Drop chunks the workbook no longer produces. Returns how many went.
+
+    `upload_documents` only ever adds or overwrites — it never removes. Export a
+    narrower date window and every document that fell outside it keeps its chunk
+    forever, so search would go on returning invoices the audit no longer covers.
+    Chunk ids are deterministic, so "no longer produced" is simply "not in the
+    set we just uploaded".
+    """
+    stale = [{"id": hit["id"]}
+             for hit in client.search(search_text="*", select=["id"])
+             if hit["id"] not in keep]
+    if stale:
+        client.delete_documents(documents=stale)
+        print(f"BUILD: deleted {len(stale)} chunk(s) no longer in the workbook")
+    return len(stale)
+
+
+def build_index(recreate=False):
+    """Create or update the index, upload every chunk, drop the ones that went.
+
+    Shared by the `build` command and by the reindex endpoint, so a rebuild
+    started from the browser and one started from a terminal cannot drift apart.
+    Returns a summary the caller can show.
+    """
     chunks = make_chunks()
     endpoint, _ = search_credentials()
     client = index_client()
+
+    for chunk, vector in zip(chunks, embed([chunk["content"] for chunk in chunks])):
+        chunk["content_vector"] = vector
 
     # Azure refuses to change an existing field's attributes — making a field
     # searchable, or changing an analyzer or vector dimensions, all fail with
     # CannotChangeExistingField. The only way through is to drop the index and
     # rebuild it, which is cheap here because the chunks are rebuilt from the
     # workbook every run anyway.
-    if args.recreate:
+    if recreate:
         try:
             client.delete_index(INDEX_NAME)
             print(f"BUILD: deleted the existing {INDEX_NAME} index")
@@ -623,9 +751,28 @@ def cmd_build(args):
     if failures:
         raise SystemExit("BUILD: some chunks did not upload.")
 
-    # Indexing is not instant; a count of 0 straight after upload is normal.
+    # Indexing is not instant; a count of 0 straight after upload is normal, and
+    # the orphan scan needs the new chunks visible before it decides what is old.
     time.sleep(3)
-    print(f"BUILD: index now reports {client.get_document_count()} documents")
+    removed = delete_orphans(client, {chunk["id"] for chunk in chunks})
+    if removed:
+        time.sleep(2)
+
+    count = client.get_document_count()
+    print(f"BUILD: index now reports {count} documents")
+    return {
+        "index": INDEX_NAME,
+        "chunks": len(chunks),
+        "documents": sum(1 for c in chunks if c["grain"] == "document"),
+        "fields": sum(1 for c in chunks if c["grain"] == "field"),
+        "removed": removed,
+        "indexed": count,
+    }
+
+
+def cmd_build(args):
+    """Create or update the index, then upload every chunk."""
+    build_index(recreate=args.recreate)
 
 
 def answer_from(question, hits):
@@ -671,6 +818,14 @@ def cmd_ask(args):
         results = search_client().search(
             search_text=args.question,
             filter=odata_filter(args.sheet, args.grain),
+            # Keyword and vector run together and the two result lists are merged
+            # by Reciprocal Rank Fusion, which throws away the raw scores and uses
+            # only each result's position — a BM25 score of 8.2 and a cosine
+            # similarity of 0.79 are not comparable numbers. Worth doing because
+            # the two methods fail in exactly opposite places.
+            vector_queries=[VectorizedQuery(vector=embed([args.question])[0],
+                                            k_nearest_neighbors=50,
+                                            fields="content_vector")],
             query_type="semantic",
             semantic_configuration_name=SEMANTIC_CONFIG,
             select=["id", "sheet", "grain", "entity", "content"],
@@ -708,7 +863,7 @@ def cmd_ask(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="phase1.py",
+        prog="hybrid_search.py",
         description="Index the invoice audit workbook into Azure AI Search and query it.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

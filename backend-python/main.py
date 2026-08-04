@@ -47,7 +47,7 @@ except Exception as ex:
     print("WARNING: could not prepare the database at startup:", ex)
 
 # The search explorer. Imported after load_dotenv above, because search_api pulls
-# in pipeline.py which reads the Azure keys at import time. Kept optional: the
+# in hybrid_search.py which reads the Azure keys at import time. Kept optional: the
 # document and Excel pages must still work on a machine where the search
 # libraries are not installed or the workbook is missing.
 try:

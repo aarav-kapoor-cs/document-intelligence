@@ -184,14 +184,14 @@ backend-python/
   excel_service.py    builds the audit workbook (mirrors DriftTemplateInterns.xlsx exactly)
 
   --- the search layer (section 7) ---
-  phase1.py           chunking + keyword search + semantic ranker
-  pipeline.py         phase1 plus embeddings, HNSW vectors, hybrid search
-  boundary.py         the same questions asked by SQL and by search, side by side
-  evaluate.py         recall@5 for all four retrieval methods, against SQL ground truth
-  applicability.py    completeness split by whether the field applies at all
-  agent_service.py    Semantic Kernel agent - picks its own tool
-  search_api.py       HTTP wrapper for the explorer page
-  static/search.html  the explorer UI - one self-contained file, no CDN, no build
+  keyword_search.py       chunking + keyword search + semantic ranker (index: audit-keyword)
+  hybrid_search.py        the same, plus embeddings and vectors (index: audit-hybrid)
+  sql_comparison.py       the same questions asked by SQL and by search, side by side
+  retrieval_metrics.py    recall@5 for all four retrieval methods, against SQL ground truth
+  field_applicability.py  completeness split by whether the field applies at all
+  agent_service.py        Semantic Kernel agent - picks its own tool
+  search_api.py           HTTP wrapper for the Angular chat box and the explorer
+  static/search.html      the explorer UI - one self-contained file, no CDN, no build
 
 src/app/app.ts, app.html    the whole Angular screen
 src/styles.css              styling
@@ -316,6 +316,82 @@ is answered by retrieval rather than by scrolling a spreadsheet.
 **The workbook is the only knowledge base.** Nothing else is indexed — not `documents.db`, not blob
 storage, not the raw OCR output.
 
+### Where is Azure AI Search in all this? (no blob storage needed)
+
+A fair question, because most tutorials start by uploading files to blob storage. Nothing here
+does, and nothing is stored "in the website" either. What actually happens:
+
+```
+the workbook -> Python builds 84 JSON chunks -> uploaded over HTTPS -> Azure AI Search
+                                                                       (your search service)
+```
+
+Azure AI Search **only ever stores JSON** — that is true of every project, including the ones
+that appear to index PDFs. Those use an **indexer** plus a **skillset**: a robot Azure runs that
+opens files in blob storage, extracts the text, chunks it and wraps it in JSON. The PDF never
+reaches the index; only JSON does. That is the *pull* model, and blob storage is a requirement
+of that model, not of Azure AI Search.
+
+This project uses the *push* model instead: the Python builds the JSON and uploads it directly,
+so there is no blob storage and no indexer to configure. That is a deliberate choice, not a
+shortcut — the built-in text-split skill cuts by **character count**, which would slice through
+the middle of a document's 33 rows and destroy the grain decision the chunking is built on.
+
+To see for yourself that Azure really is doing the work:
+
+```bash
+python -c "
+import hybrid_search
+c = hybrid_search.search_client()
+print(c.get_document_count())            # 84
+print(c.get_document(key='comp-gst-amount'))   # the JSON, as Azure stores it
+"
+```
+
+Or open the Azure portal → your Search service → **Search management → Indexes**, where
+`audit-keyword` and `audit-hybrid` both show 84 documents. Every query the app runs is answered
+there; `@search.score` and `@search.reranker_score` are Azure's numbers, computed on Azure.
+
+### Asking questions from the Angular page
+
+The main app has an **AI Search** option in the service dropdown. Type a question, and answer it
+one of two ways:
+
+| Mode | What it does | Best at |
+|---|---|---|
+| **Grounded answer (RAG)** | retrieves chunks, then the model writes an answer citing each `[chunk-id]` | open questions: "which fields are extracting badly" |
+| **Agent picks a tool** | Semantic Kernel chooses between an exact SQL count, a document lookup, search, or an applicability check — and shows which | counting, and single named invoices |
+
+RAG mode has a **grain** selector, and it matters more than it looks. Over *field* chunks the
+answer leads with the real gaps (`GST Amount` 72.2%, `Tax Details` 83.3%). Over *document*
+chunks the same question answers with optional fields no invoice ever carried. The agent picks
+the grain itself, which is the honest argument for it.
+
+### Keeping the index current
+
+**Exporting the Excel report also rebuilds the search index.** That closes a loop that used to
+need a terminal: export the workbook, copy it next to the module, run `build`. Now the export
+button does all three, and the page reports both stages separately — a failed re-index does not
+mean a failed download.
+
+```
+This is your Excel sheet downloaded.
+Search index updated - 84 chunks (18 documents, 66 fields) from Audit_04082026.xlsx.
+```
+
+Behind it, `POST /api/search/reindex` rebuilds the workbook through the *same* two calls
+`/api/export` uses, so the file you download and the file that gets indexed cannot disagree.
+
+Two things worth knowing:
+
+- **It writes to `AUDIT_XLSX` if that is set**, because that is where the chunker reads from —
+  writing anywhere else would silently re-index the previous file. The workbook it replaces is
+  kept once as `<name>.previous.xlsx`, since a fresh export only covers documents currently in
+  the database and may well be smaller than what it replaced.
+- **Chunks that disappear are deleted.** `upload_documents` only adds or overwrites, so without
+  this a document that drops out of the date window would keep its chunk forever and search
+  would go on returning an invoice the audit no longer covers.
+
 ### The explorer UI
 
 ```bash
@@ -332,16 +408,16 @@ uvicorn main:app --port 8001      # then open http://localhost:8001/search
 ### From the terminal
 
 ```bash
-python phase1.py chunks            # no Azure needed - prints what would be uploaded
-python phase1.py build             # creates the index and uploads
-python phase1.py build --recreate  # drops it first - needed after a schema change
-python phase1.py ask "which fields are extracting badly" --grain field --top 30 --answer
+python keyword_search.py chunks            # no Azure needed - prints what would be uploaded
+python keyword_search.py build             # creates the index and uploads
+python keyword_search.py build --recreate  # drops it first - needed after a schema change
+python keyword_search.py ask "which fields are extracting badly" --grain field --top 30 --answer
 
-python pipeline.py build           # the same, plus embeddings and hybrid search
-python boundary.py                 # SQL vs search, the same questions side by side
-python boundary.py --check         # the trend sheets must reconcile against the log
-python evaluate.py                 # recall@5 for all four methods
-python applicability.py --gaps     # only the genuine extraction gaps
+python hybrid_search.py build           # the same, plus embeddings and hybrid search
+python sql_comparison.py                 # SQL vs search, the same questions side by side
+python sql_comparison.py --check         # the trend sheets must reconcile against the log
+python retrieval_metrics.py                 # recall@5 for all four methods
+python field_applicability.py --gaps     # only the genuine extraction gaps
 
 python agent_service.py "how many documents are missing the vendor GSTIN"
 ```
@@ -461,7 +537,7 @@ Search retrieves. It does not aggregate or compare.
 first, and the genuinely worst fields at **5.6%** do not appear at all. Nothing is broken:
 `verdict()` did its job, every sub-90% chunk says "extracting badly" — but they all say it in the
 same words, so BM25 cannot tell them apart and the reranker has no sense that 5.6 is smaller than
-83.3. **Ranking is SQL's job.** `boundary.py` answers it exactly.
+83.3. **Ranking is SQL's job.** `sql_comparison.py` answers it exactly.
 
 What it is genuinely good at: **exact identifiers** (`ask "PSV/1650"` scores 2.58 with the
 near-collision `BVN/1650` behind at 1.78), **filtering** (`--sheet`, `--grain`), and a **single
@@ -471,7 +547,7 @@ The clear failure: **synonyms.** "documents where the tax number did not come th
 documents, only 1 of which is actually missing its GSTIN. The question says "tax number", the chunks
 say "GSTIN" — no shared letters, no match.
 
-Mean recall@5 over six queries (`evaluate.py`, ground truth from SQL):
+Mean recall@5 over six queries (`retrieval_metrics.py`, ground truth from SQL):
 
 | Method | recall@5 |
 |---|---|
@@ -513,7 +589,7 @@ can. Measured against the same index that ranked `comp-tax-details` first:
 ...
 ```
 
-That agrees with `boundary.py`'s SQL. Three rules in `RAG_SYSTEM` make the difference between this
+That agrees with `sql_comparison.py`'s SQL. Three rules in `RAG_SYSTEM` make the difference between this
 and a confident invention:
 
 - **Only the chunks.** Asked for a bank account number that appears nowhere, it answers *"not
@@ -525,6 +601,17 @@ and a confident invention:
 Retrieval still decides what the model can see. `--top` defaults to 5 for reading and 15 with
 `--answer`; an aggregate question needs more (`--top 30`). **RAG does not make search complete; it
 makes what search found usable.** For an exact count, SQL remains the honest answer.
+
+### A note on MCP — currently unused
+
+`requirements.txt` pins `mcp==1.29.0`, which is easy to mistake for "this project uses MCP".
+**It does not.** Nothing here imports `mcp`, and Semantic Kernel only touches it if you import
+`semantic_kernel.connectors.mcp`, which no code does. The agent runs fine either way; the pin is
+insurance for work not yet done.
+
+The obvious next step, if it is ever wanted, is to expose the four audit tools below as an MCP
+**server**, so Claude Desktop or any other MCP client could query the audit workbook directly.
+That is a separate piece of work, not something the pin alone provides.
 
 ### The agent
 
@@ -593,7 +680,7 @@ So the extraction is good, and the real audit finding is small and specific: `GS
 `Vendor GSTIN` each missing from **5 of 18** documents, `Tax Details` from 3, `Customer GSTIN` from
 2. Everything else is schema noise.
 
-This split deliberately lives **outside the workbook** — in `applicability.py` and in a sentence on
+This split deliberately lives **outside the workbook** — in `field_applicability.py` and in a sentence on
 each field chunk — because the workbook has to keep mirroring `DriftTemplateInterns.xlsx` exactly,
 verbatim headers and all. Nothing enforces that but discipline: an appended column would pass all 36
 tests silently.
@@ -654,7 +741,7 @@ sitting idle.
 | Index shows 0 documents | Indexing takes a few seconds — refresh. If still 0, the index name differs from the one being viewed |
 | `CannotChangeExistingField` on build | Azure cannot alter a field's attributes in place. Re-run with `build --recreate` |
 | Document chunks answer a question about fields | Expected. Use `--grain field` — a document chunk lists nineteen failing field names, so the reranker treats it as an answer |
-| `ImportError: streamablehttp_client` from Semantic Kernel | `mcp` 2.x removed it. `requirements.txt` pins `mcp==1.29.0`; do not upgrade without checking SK |
+| `ImportError: streamablehttp_client` from Semantic Kernel | Only reachable by importing `semantic_kernel.connectors.mcp`, which nothing here does — see the MCP note below. `requirements.txt` pins `mcp==1.29.0` because 2.x removed that symbol |
 
 ---
 

@@ -35,6 +35,30 @@ export class App {
   exportLoading = false;
   exportMessage = '';
   exportError = '';
+  reindexMessage = ''; // reported separately: the download can succeed while this fails
+
+  // ---- AI Search (the chat box) ----
+  // The full explorer - chunks, the four-way retrieval comparison, the agent
+  // trace - is served by the backend itself and opens in its own tab.
+  explorerUrl = backendUrl + '/search';
+
+  // 'rag'   -> retrieve chunks, then have the model write a grounded answer.
+  // 'agent' -> let Semantic Kernel pick a tool (exact SQL count, fetch one
+  //            document, check whether a field even applies) and show which.
+  searchMode: 'rag' | 'agent' = 'rag';
+
+  // Which chunks RAG is allowed to read. This is not decoration: asked over
+  // document chunks, "which fields are extracting badly" answers with optional
+  // fields no invoice ever had, while field chunks give the real gaps.
+  searchGrain = 'field';
+
+  searchQuestion = 'which fields are extracting badly';
+  searchLoading = false;
+  searchError = '';
+  searchAnswer = '';
+  searchHits: { id: string; entity: string; sheet: string; content: string }[] = [];
+  searchTrace: { tool: string; arguments: any }[] = [];
+  indexStatus = ''; // e.g. "84 chunks from Audit_04082026.xlsx"
 
   files: { name: string; base64: string }[] = []; // the files the user picked
   prompt = ''; // the prompt the user types
@@ -134,6 +158,7 @@ export class App {
     }
 
     this.exportLoading = true;
+    this.reindexMessage = '';
     const body = {
       from_date: this.exportFromDate,
       to_date: this.exportToDate,
@@ -158,6 +183,10 @@ export class App {
         this.exportMessage = 'This is your Excel sheet downloaded.';
         this.exportLoading = false;
         this.cd.detectChanges();
+        // The file is already on disk, so the search index can now catch up in
+        // the background. Kept as its own call rather than hidden inside
+        // /api/export: the download should not wait on 84 embedding calls.
+        this.refreshSearchIndex(body);
       },
       error: (err) => {
         this.exportLoading = false;
@@ -168,6 +197,106 @@ export class App {
         this.cd.detectChanges();
       },
     });
+  }
+
+  // Re-chunk the freshly exported workbook and upload it to Azure AI Search, so
+  // asking a question reflects the documents just analysed. A failure here is
+  // reported on its own line - the Excel download itself already succeeded.
+  refreshSearchIndex(body: { from_date: string; to_date: string; doc_type: string }) {
+    this.reindexMessage = 'Updating the search index...';
+    this.cd.detectChanges();
+    this.http.post<any>(backendUrl + '/api/search/reindex', body).subscribe({
+      next: (r) => {
+        this.reindexMessage =
+          'Search index updated - ' + r.chunks + ' chunks (' + r.documents +
+          ' documents, ' + r.fields + ' fields) from ' + r.workbook + '.';
+        this.cd.detectChanges();
+      },
+      error: (err) => {
+        this.reindexMessage =
+          'The Excel downloaded, but the search index was not updated: ' +
+          (err.error?.detail || 'the backend could not be reached') + '.';
+        this.cd.detectChanges();
+      },
+    });
+  }
+
+  // ---- AI Search: ask the audit a question ----
+
+  // Two ways to answer, both already served by the backend. RAG retrieves chunks
+  // and has the model write a grounded answer with [chunk-id] citations. The
+  // agent instead picks a tool - and counting is the clearest reason it exists,
+  // because search returns matching chunks, not a total.
+  askSearch() {
+    if (!this.searchQuestion.trim()) {
+      this.searchError = 'Please type a question.';
+      return;
+    }
+    this.searchLoading = true;
+    this.searchError = '';
+    this.searchAnswer = '';
+    this.searchHits = [];
+    this.searchTrace = [];
+
+    const url = this.searchMode === 'agent' ? '/api/search/agent' : '/api/search/ask';
+    // 'top' is deliberately not sent: the backend fills it with RAG_CONTEXT when
+    // an answer is asked for, the same rule the command line uses.
+    const body =
+      this.searchMode === 'agent'
+        ? { question: this.searchQuestion }
+        : { question: this.searchQuestion, grain: this.searchGrain, answer: true };
+
+    this.http.post<any>(backendUrl + url, body).subscribe({
+      next: (r) => {
+        this.searchAnswer = r.answer || '(no answer came back)';
+        this.searchHits = r.hits || [];
+        // The agent's trace holds a 'call' and a 'result' entry per tool; only
+        // the calls are worth showing, because they are the routing decision.
+        this.searchTrace = (r.trace || []).filter((s: any) => s.type === 'call');
+        this.searchLoading = false;
+        this.cd.detectChanges();
+      },
+      error: (err) => {
+        this.searchLoading = false;
+        this.searchError =
+          err.status === 0
+            ? 'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).'
+            : err.error?.detail || 'The search failed - try again.';
+        this.cd.detectChanges();
+      },
+    });
+  }
+
+  // Opening the AI Search screen reads the index status once, so the page can
+  // say straight away whether anything is indexed at all.
+  onServiceChange() {
+    if (this.service === 'search') {
+      this.loadIndexStatus();
+    }
+  }
+
+  // How many chunks are indexed and which workbook they came from, so a stale
+  // index is visible rather than something you discover from a wrong answer.
+  loadIndexStatus() {
+    this.http.get<any>(backendUrl + '/api/search/status').subscribe({
+      next: (r) => {
+        this.indexStatus = r.chunks
+          ? r.chunks + ' chunks indexed, from ' + (r.workbook || 'an unknown workbook')
+          : 'No chunks indexed yet - export the Excel report to build the index.';
+        this.cd.detectChanges();
+      },
+      error: () => {
+        this.indexStatus = 'The search index status could not be read.';
+        this.cd.detectChanges();
+      },
+    });
+  }
+
+  // Show the arguments a tool was called with, e.g. "field=Vendor GSTIN".
+  traceArgs(args: any): string {
+    return Object.keys(args || {})
+      .map((k) => k + '=' + JSON.stringify(args[k]))
+      .join(', ');
   }
 
   // ---- Helpers for showing the extracted fields ----

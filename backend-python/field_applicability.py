@@ -12,8 +12,8 @@ Separating the two turns "39.4% complete, extraction is failing" into "93% on
 the fields that matter, and five invoices are genuinely missing a vendor GSTIN",
 which is the finding worth taking to whoever owns the audit.
 
-    python applicability.py          # the full breakdown
-    python applicability.py --gaps   # only the fields that are real problems
+    python field_applicability.py          # the full breakdown
+    python field_applicability.py --gaps   # only the fields that are real problems
 
 Contacts nothing and costs nothing. Deliberately does NOT write to the workbook:
 that has to keep mirroring the mentor's DriftTemplateInterns.xlsx exactly, so
@@ -22,7 +22,7 @@ this stays a separate report.
 
 import argparse
 
-from phase1 import COMP_SHEET, CORE_FIELDS, sheet
+from keyword_search import COMP_SHEET, CORE_FIELDS, sheet
 
 
 def rows():
@@ -53,7 +53,7 @@ def show(title, group):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="applicability.py",
+        prog="field_applicability.py",
         description="Split completeness by whether a field applies to these invoices.")
     parser.add_argument("--gaps", action="store_true",
                         help="only the core fields that are below 100%%")

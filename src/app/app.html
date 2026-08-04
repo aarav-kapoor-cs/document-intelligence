@@ -1,10 +1,11 @@
 <h1>Document Intelligence Sample Project</h1>
 
 <p>Select service:</p>
-<select [(ngModel)]="service">
+<select [(ngModel)]="service" (ngModelChange)="onServiceChange()">
   <option value="">-- Choose a service --</option>
   <option value="document">Document Intelligence</option>
   <option value="excel">Excel report</option>
+  <option value="search">AI Search</option>
 </select>
 
 @if (service === 'document') {
@@ -160,4 +161,87 @@
   @if (exportMessage) {
     <p><b>{{ exportMessage }}</b></p>
   }
+  <!-- Its own line: the download can succeed while the re-index fails. -->
+  @if (reindexMessage) {
+    <p>{{ reindexMessage }}</p>
+  }
+}
+
+@if (service === 'search') {
+  <h2>AI Search</h2>
+
+  <p>
+    Ask a question about the audit report. The answer comes from the Excel
+    workbook only - what extracted and what did not, never the invoice contents.
+  </p>
+  @if (indexStatus) {
+    <p><i>{{ indexStatus }}</i></p>
+  }
+
+  <p>How should the question be answered?</p>
+  <label>
+    <input type="radio" name="searchMode" value="rag" [(ngModel)]="searchMode" />
+    Grounded answer (RAG) - retrieves chunks, then writes an answer citing them
+  </label>
+  <br />
+  <label>
+    <input type="radio" name="searchMode" value="agent" [(ngModel)]="searchMode" />
+    Agent picks a tool - counts exactly with SQL, or fetches one document
+  </label>
+
+  <!-- Only RAG needs this. The agent chooses the grain itself, which is the
+       honest argument for it: over document chunks the same question answers
+       with optional fields no invoice ever had. -->
+  @if (searchMode === 'rag') {
+    <p>Which chunks to read:</p>
+    <select [(ngModel)]="searchGrain">
+      <option value="field">Field chunks - one field across every document</option>
+      <option value="document">Document chunks - every field of one document</option>
+      <option value="">Both</option>
+    </select>
+  }
+
+  <p>Your question:</p>
+  <input type="text" [(ngModel)]="searchQuestion" size="60" />
+  <button (click)="askSearch()" [disabled]="searchLoading">Ask</button>
+
+  @if (searchLoading) {
+    <p>Please wait...</p>
+  }
+  @if (searchError) {
+    <p class="error">{{ searchError }}</p>
+  }
+
+  <!-- Which tool the agent chose, shown before the answer, because a right
+       answer reached through the wrong tool is still wrong. -->
+  @if (searchTrace.length > 0) {
+    <p><b>Tools the agent chose:</b></p>
+    <ul>
+      @for (step of searchTrace; track $index) {
+        <li>{{ step.tool }}({{ traceArgs(step.arguments) }})</li>
+      }
+    </ul>
+  }
+
+  @if (searchAnswer) {
+    <h3>Answer</h3>
+    <pre>{{ searchAnswer }}</pre>
+  }
+
+  <!-- The chunks the answer was built from, so every claim can be checked. -->
+  @if (searchHits.length > 0) {
+    <h3>Chunks it read ({{ searchHits.length }})</h3>
+    @for (hit of searchHits; track hit.id) {
+      <div class="card">
+        <b>{{ hit.id }}</b> - {{ hit.entity }} <i>({{ hit.sheet }})</i>
+        <p>{{ hit.content }}</p>
+      </div>
+    }
+  }
+
+  <p>
+    For the chunk browser, the four-way retrieval comparison and the full agent
+    trace, open the explorer:
+    <a [href]="explorerUrl" target="_blank">{{ explorerUrl }}</a>
+  </p>
 }
