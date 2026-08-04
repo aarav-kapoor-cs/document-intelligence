@@ -156,12 +156,27 @@ use a SQL username/password instead, see the commented alternative in `.env.exam
 
 ### Confirm it works
 
+Run these in order. Each one proves the layer below it is fine, so the first
+failure tells you exactly where to look.
+
 | # | Check | What proves it |
 |---|---|---|
-| 1 | Backend up | Terminal 1 shows `Uvicorn running on http://127.0.0.1:8001` with no red error |
-| 2 | Frontend up | http://localhost:4200 shows the dropdown and file picker |
-| 3 | OCR + AI work | Analyze a file → an answer actually *about your document*, with fields and token counts |
-| 4 | Saved to SQL Server | In SSMS: `SELECT * FROM Documents;` on `DocIntelligenceDb` shows a new row |
+| 1 | The files arrived | `python -m unittest test_backend` prints **`OK`** (36 tests). A `ModuleNotFoundError` here means a file is missing or still has an old name |
+| 2 | Backend up | Terminal 1 shows `Uvicorn running on http://127.0.0.1:8001`, plus `DATABASE: using ...` and `SEARCH: explorer at ...`, with no red error |
+| 3 | Database reachable | http://localhost:8001/api/health returns `{"database":"ok"}` |
+| 4 | Frontend up | http://localhost:4200 shows the dropdown with **three** options: Document Intelligence, Excel report, AI Search |
+| 5 | OCR + AI work | Analyze a file → an answer actually *about your document*, with fields and token counts |
+| 6 | Saved to SQL Server | In SSMS: `SELECT * FROM Documents;` on `DocIntelligenceDb` shows a new row |
+| 7 | Search is wired | Choose **Excel report** → pick dates → **Download Excel report**. You should get the file *and*, a few seconds later, `Search index updated - N chunks` |
+| 8 | The chat box answers | Choose **AI Search** → ask *"which fields are extracting badly"* → the answer names real fields with percentages |
+
+Check 7 is the one that proves the whole loop. If it says *"the search index was
+not updated"*, the app still works — only the search half is unconfigured, and
+the message says which part.
+
+> **Leave `AUDIT_XLSX` blank on this laptop.** Set, it forces every re-index to
+> overwrite that one file; blank, each export writes a fresh `Audit_<date>.xlsx`
+> next to the code and the newest one is used automatically.
 
 > Work in one direction: edit and push on the personal laptop, and let the office laptop
 > re-download. That avoids needing git there at all.
@@ -179,7 +194,8 @@ backend-python/
   ocr_service.py      Azure Document Intelligence - text + fields as structured JSON
   checker_service.py  confirms the file matches the chosen document type
   ai_service.py       Azure OpenAI - the answer + token counts
-  openai_client.py    shared Azure OpenAI client (v1 endpoint, no api-version)
+                      (ai_service also owns the shared OpenAI client - v1 endpoint,
+                       no api-version - which the search modules reuse for RAG)
   database.py         plain SQL: SQLite file or SQL Server via stored procedures
   excel_service.py    builds the audit workbook (mirrors DriftTemplateInterns.xlsx exactly)
 
