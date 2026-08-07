@@ -282,10 +282,16 @@ def scan(records: list[dict], model: dict | None = None) -> dict:
         })
 
     results.sort(key=lambda result: result["score"], reverse=True)
+    # These key names are the AnomalyScanResponse contract in models.py. FastAPI
+    # filters the response through that model, so a key spelled differently here
+    # is not an error - it is silently dropped and the field falls back to its
+    # default, which is how "corpus_checks_ran" could read false while the checks
+    # had in fact run. Change both or neither.
     return {
         "documents": len(results),
         "corpus_n": len(results),
-        "robust_z_available": len(results) >= anomaly_rules.MIN_CORPUS,
+        "corpus_checks_ran": len(results) >= anomaly_rules.MIN_CORPUS,
+        "method": "logistic_regression" if model is not None else "rules_only",
         "model_version": (model or {}).get("run_id", ""),
         "results": results,
         "notes": notes,
