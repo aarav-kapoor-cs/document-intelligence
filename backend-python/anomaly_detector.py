@@ -189,8 +189,11 @@ def _corpus_signals(scored: list[dict], notes: list[str]) -> None:
             continue
         files = sorted({entry["source_file"] for entry in members})
         for entry in members:
+            # layer "corpus", not "rule": anomaly_metrics.py separates the two so
+            # that a hard negative flagged only because it has peers is not
+            # counted as a rule false alarm.
             entry["signals"].append({
-                "name": "duplicate_invoice", "layer": "rule", "value": float(len(members)),
+                "name": "duplicate_invoice", "layer": "corpus", "value": float(len(members)),
                 "contribution": float(anomaly_rules.WEIGHTS["duplicate_invoice"]),
                 "detail": f"Invoice {key[0]} appears {len(members)} times with the same "
                           f"vendor, date and amount, across: {', '.join(files)}.",
