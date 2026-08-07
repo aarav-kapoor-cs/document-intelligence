@@ -1,0 +1,23 @@
+# Conda environment for the training job only. The FastAPI backend installs none
+# of this: it applies the exported coefficients with numpy, which
+# backend-python/requirements.txt has always pinned.
+name: gst-anomaly-train
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # Pinned to exactly what backend-python/requirements.txt has. The model is
+      # fitted here and applied there, so any difference in float behaviour
+      # between the two would show up as a document scoring differently in
+      # training than in production.
+      - numpy==2.5.1
+      - pandas==2.3.3
+
+      # Training only. scikit-learn 1.6+ is required for the numpy 2.x ABI.
+      - scikit-learn==1.6.1
+      - mlflow==2.19.0
+      - azureml-mlflow==1.59.0

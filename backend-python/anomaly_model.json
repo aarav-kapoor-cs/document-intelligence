@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-07T06:49:53+00:00",
+  "run_id": "",
+  "feature_names": [
+    "core_missing_count",
+    "core_invalid_count",
+    "field_count",
+    "conf_present",
+    "conf_min",
+    "conf_mean",
+    "conf_core_min",
+    "conf_below_080_frac",
+    "totals_known",
+    "total_residual_abs",
+    "total_residual_rel",
+    "total_residual_over_rupee",
+    "item_sum_residual_rel",
+    "items_count",
+    "total_magnitude_log",
+    "vendor_gstin_present",
+    "vendor_gstin_shape_ok",
+    "vendor_gstin_checksum_ok",
+    "pan_instead_of_gstin",
+    "customer_gstin_present",
+    "self_billing",
+    "invoice_date_parsed",
+    "invoice_date_future_days",
+    "due_before_invoice_days"
+  ],
+  "feature_medians": [
+    0.0,
+    0.0,
+    13.0,
+    1.0,
+    0.6964999999999999,
+    0.8987454545454545,
+    0.705,
+    0.18181818181818182,
+    1.0,
+    1.1641532182693481e-10,
+    1.9951448248001963e-16,
+    0.0,
+    0.0,
+    3.0,
+    5.209811113345979,
+    1.0,
+    1.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0
+  ],
+  "scaler_mean": [
+    0.05787037037037037,
+    0.03009259259259259,
+    12.810185185185185,
+    0.7152777777777778,
+    0.7143796296296301,
+    0.9046641647961087,
+    0.7196481481481486,
+    0.17279508043396966,
+    0.9629629629629629,
+    58408.39101851848,
+    0.5392584084565376,
+    0.09953703703703703,
+    0.08612594708567849,
+    3.1018518518518516,
+    4.920438592560748,
+    0.9699074074074074,
+    0.9699074074074074,
+    0.9189814814814815,
+    0.03009259259259259,
+    1.0,
+    0.0,
+    0.9953703703703703,
+    0.041666666666666664,
+    0.0
+  ],
+  "scaler_scale": [
+    0.2334981597434269,
+    0.17084211560282478,
+    0.40948020682387265,
+    0.45128203863555466,
+    0.2159515428152973,
+    0.0732875628141958,
+    0.2140249451026685,
+    0.16366203165545135,
+    0.1888525745775097,
+    748565.9278153019,
+    4.8470039549445545,
+    0.2993817217114712,
+    0.25207867485105795,
+    1.4684321117916965,
+    1.4716288012528975,
+    0.17084211560282478,
+    0.17084211560282478,
+    0.2728635523033145,
+    0.17084211560282478,
+    1.0,
+    1.0,
+    0.06788369582692211,
+    0.44422737754776526,
+    1.0
+  ],
+  "coef": [
+    2.823653236988985,
+    0.15722869898524705,
+    0.5524651980909431,
+    -4.004891664214813,
+    0.37898893051317145,
+    -4.411577404721742,
+    -1.170868239321086,
+    -1.1367208987858535,
+    -0.5237309384859645,
+    0.2984668283980503,
+    0.5615372277563567,
+    1.5140585717462345,
+    1.3453127450540616,
+    -0.13579406119228044,
+    0.584554398517228,
+    -0.1572286989852498,
+    -0.15722869898525185,
+    -2.691540768815299,
+    0.1572286989852509,
+    0.0,
+    0.0,
+    -0.14632390550489952,
+    -0.9703099719159765,
+    0.0
+  ],
+  "intercept": -0.46733162081864793,
+  "threshold": 0.354,
+  "metrics": {
+    "logistic_regression": {
+      "precision": 0.9183673469387755,
+      "recall": 0.9,
+      "f1": 0.9090909090909091,
+      "average_precision": 0.9537577448393493,
+      "roc_auc": 0.9738235294117648
+    },
+    "isolation_forest": {
+      "precision": 0.5918367346938775,
+      "recall": 0.58,
+      "f1": 0.5858585858585859,
+      "average_precision": 0.7300227246909357,
+      "roc_auc": 0.8264705882352942
+    },
+    "rules_only": {
+      "precision": 0.9361702127659575,
+      "recall": 0.88,
+      "f1": 0.9072164948453608
+    },
+    "holdout_types": {
+      "types": [
+        "gstin_checksum_bad",
+        "item_sum_mismatch"
+      ],
+      "rows": 44,
+      "recall_at_threshold": 0.75,
+      "mean_probability": 0.7190042573335135
+    },
+    "by_type": {
+      "confidence_collapse": {
+        "rows": 44,
+        "recall": 0.8409090909090909
+      },
+      "core_field_dropped": {
+        "rows": 37,
+        "recall": 1.0
+      },
+      "duplicate_invoice": {
+        "rows": 36,
+        "recall": 0.16666666666666666
+      },
+      "gstin_checksum_bad": {
+        "rows": 31,
+        "recall": 1.0
+      },
+      "high_value": {
+        "rows": 36,
+        "recall": 0.9444444444444444
+      },
+      "item_sum_mismatch": {
+        "rows": 14,
+        "recall": 0.7857142857142857
+      },
+      "pan_instead_of_gstin": {
+        "rows": 20,
+        "recall": 1.0
+      },
+      "total_mismatch": {
+        "rows": 33,
+        "recall": 1.0
+      },
+      "vendor_amount_outlier": {
+        "rows": 33,
+        "recall": 0.9696969696969697
+      }
+    }
+  },
+  "training": {
+    "rows": 618,
+    "seed": 20260807,
+    "C": 10.0,
+    "target_precision": 0.9,
+    "holdout_types": [
+      "gstin_checksum_bad",
+      "item_sum_mismatch"
+    ],
+    "label": "is_intrinsic_anomaly",
+    "source": "synthetic_invoices.jsonl",
+    "caveat": "Labels are injected by synthetic_invoices.py, so these numbers describe how well the model finds what that generator produces - not how it behaves on real invoices. Quote metrics.holdout_types, which at least measures generalisation to unseen kinds of wrongness."
+  }
+}

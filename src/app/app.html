@@ -6,6 +6,7 @@
   <option value="document">Document Intelligence</option>
   <option value="excel">Excel report</option>
   <option value="search">AI Search</option>
+  <option value="anomaly">Anomaly detector</option>
 </select>
 
 @if (service === 'document') {
@@ -243,5 +244,91 @@
     For the chunk browser, the four-way retrieval comparison and the full agent
     trace, open the explorer:
     <a [href]="explorerUrl" target="_blank">{{ explorerUrl }}</a>
+  </p>
+}
+
+@if (service === 'anomaly') {
+  <h2>Anomaly detector</h2>
+
+  <p>
+    Scores each saved invoice for the seven things the audit workbook cannot see:
+    a missing or malformed core field, a PAN where the GSTIN should be, a GSTIN
+    whose check digit is wrong, an invoice above the review threshold, amounts
+    that do not reconcile, the same invoice processed twice, and an amount far
+    from that vendor's usual.
+  </p>
+  @if (anomalyStatus) {
+    <p><i>{{ anomalyStatus }}</i></p>
+  }
+
+  <p>Step 1: Choose the date range (which days of saved results to score)</p>
+  From: <input type="date" [(ngModel)]="anomalyFromDate" />
+  To: <input type="date" [(ngModel)]="anomalyToDate" />
+
+  <p>Step 2: Choose which type of document to score</p>
+  <select [(ngModel)]="anomalyDocType">
+    @for (t of exportTypes; track t.id) {
+      <option [value]="t.id">{{ t.label }}</option>
+    }
+  </select>
+
+  <p>Step 3: Scan</p>
+  <button (click)="scanAnomalies()" [disabled]="anomalyLoading">Scan for anomalies</button>
+
+  @if (anomalyLoading) {
+    <p>Please wait...</p>
+  }
+  @if (anomalyError) {
+    <p class="error">{{ anomalyError }}</p>
+  }
+
+  <!-- What the scan could not do, in its own words: no trained model yet, or too
+       few documents for the duplicate and vendor-outlier checks to mean anything. -->
+  @for (note of anomalyNotes; track note) {
+    <p><i>{{ note }}</i></p>
+  }
+
+  @if (anomalyResults.length) {
+    <p>
+      {{ anomalyResults.length }} document(s), worst first. Scored by
+      <b>{{ anomalyMethod === 'logistic_regression' ? 'the trained model' : 'the rules alone' }}</b>.
+    </p>
+    <table class="fields-table">
+      <tr>
+        <th>Score</th>
+        <th>Invoice</th>
+        <th>File</th>
+        <th>What fired</th>
+      </tr>
+      @for (row of anomalyResults; track row.documentId) {
+        <tr>
+          <td [class]="bandClass(row.band)">{{ row.band }} {{ row.score }}</td>
+          <td>{{ row.invoiceNumber || '(no number)' }}</td>
+          <td>{{ row.sourceFile }}</td>
+          <td>
+            @if (row.signals.length) {
+              <details>
+                <summary>{{ row.signals.length }} check(s) fired</summary>
+                <ul>
+                  @for (s of row.signals; track s.name) {
+                    <li><b>{{ s.name }}</b>: {{ s.detail }}</li>
+                  }
+                </ul>
+              </details>
+            } @else {
+              nothing
+            }
+          </td>
+        </tr>
+      }
+    </table>
+  }
+
+  <p>
+    <i>
+      These are arithmetic and format checks over the extracted values, plus a
+      model trained on synthetic invoices. A flag is a reason to look, never a
+      finding.
+    </i>
   </p>
 }

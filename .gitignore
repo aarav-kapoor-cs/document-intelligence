@@ -56,6 +56,13 @@ Thumbs.db
 *.xls
 chunks.json
 
+# Generated training data. Reproducible from synthetic_invoices.py with the seed
+# recorded in the model artifact, so there is nothing here worth committing.
+# (anomaly_model.json itself IS committed - it is 4 KB of coefficients fitted to
+# synthetic data, holds no real values, and the office laptop has no other way
+# to get it.)
+azureml/data/
+
 # Python
 __pycache__/
 *.pyc

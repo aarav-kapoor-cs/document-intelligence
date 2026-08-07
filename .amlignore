@@ -1,0 +1,41 @@
+# What must NOT be uploaded to the Azure ML workspace.
+#
+# READ THIS BEFORE RUNNING `az ml job create`. That command uploads the whole
+# `code:` directory to the workspace's blob store, and job.yml sets `code: ..`
+# (the repo root) because train.py has to import the same anomaly_features.py the
+# backend serves with - if training and serving computed features differently the
+# exported coefficients would be meaningless.
+#
+# Azure ML honours THIS file, not .gitignore. Without it, submitting a job would
+# upload backend-python/.env (every Azure key), documents.db (real vendor names,
+# GSTINs and invoice values), any audit workbook, and the whole virtualenv. Blob
+# storage is not a place secrets can be quietly taken back out of.
+#
+# Keep this in step with .gitignore's "Secrets & local data" section.
+
+# Secrets
+.env
+**/.env
+
+# Real extracted data
+*.db
+*.db-shm
+*.db-wal
+**/*.db
+*.xlsx
+*.xls
+chunks.json
+
+# Generated training data - passed to the job as a registered data asset, not
+# bundled with the code.
+azureml/data/
+
+# Bulk that would only slow the upload down
+.venv/
+venv/
+node_modules/
+.angular/
+dist/
+__pycache__/
+*.pyc
+.git/

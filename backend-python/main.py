@@ -64,6 +64,19 @@ try:
 except Exception as ex:
     print("WARNING: the search explorer is unavailable:", ex)
 
+# The anomaly detector. Optional for the same reason the search explorer is: the
+# document and Excel pages must keep working on a machine where this half is not
+# set up. Unlike search it needs no Azure service and no workbook - only numpy,
+# which requirements.txt has always pinned - so the usual reason to land here is
+# a genuine import error worth seeing.
+try:
+    import anomaly_api
+
+    app.include_router(anomaly_api.router)
+    print("ANOMALY: scoring by", anomaly_api.status()["method"])
+except Exception as ex:
+    print("WARNING: the anomaly detector is unavailable:", ex)
+
 
 def _save(file_name, model, prompt, text, fields, ai_json, answer, tokens, prompt_id):
     """Insert one result row into the database (fields and AI JSON stored as JSON)."""

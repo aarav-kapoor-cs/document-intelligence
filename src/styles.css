@@ -140,6 +140,27 @@ details summary {
   font-weight: 600;
 }
 
+/* Anomaly score bands. Excel's Good / Neutral / Bad colours - the same three
+   the audit workbook fills the Recommended Threshold column with - so a red
+   cell means the same thing on screen as it does in the sheet. */
+.band-clean {
+  background: #c6efce;
+  color: #006100;
+  font-weight: 600;
+}
+
+.band-review {
+  background: #ffeb9c;
+  color: #9c6500;
+  font-weight: 600;
+}
+
+.band-suspect {
+  background: #ffc7ce;
+  color: #9c0006;
+  font-weight: 600;
+}
+
 hr {
   margin: 32px 0;
   border: none;

@@ -1,0 +1,18 @@
+# Training-side dependencies. Install these ONLY on the machine that submits
+# jobs and fetches models - never into backend-python/.venv.
+#
+#   python -m pip install -r azureml/requirements-train.txt
+#
+# The backend deliberately needs none of it. train.py exports the fitted logistic
+# regression as coefficients in anomaly_model.json, and applying those is a numpy
+# dot product, so backend-python/requirements.txt gains nothing at all from this
+# feature.
+
+# Submitting jobs and downloading registered models (azureml/fetch_model.py).
+azure-ai-ml==1.29.0
+azure-identity==1.19.0
+
+# Only needed to run train.py locally before submitting it. In the cloud the job
+# gets these from environment.yml instead.
+scikit-learn==1.6.1
+mlflow==2.19.0

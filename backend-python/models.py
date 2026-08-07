@@ -73,3 +73,54 @@ class CompareRequest(BaseModel):
 # A question for the Semantic Kernel agent, which picks its own tools.
 class AgentRequest(BaseModel):
     question: str = ""
+
+
+# --- the anomaly detector ---
+
+# One document's extracted fields, scored without saving anything. This is what
+# the Document Intelligence page sends straight after an upload, so a file can be
+# checked before it is ever exported. `fields` is a raw KeyValuesJson dict.
+class AnomalyScoreRequest(BaseModel):
+    fields: dict = {}
+    doc_type: str = "prebuilt-invoice"
+
+
+# One reason a document scored the way it did. `layer` says which of the three
+# produced it - "rule" (deterministic), "robust_z" (median/MAD across the scan)
+# or "model" (a feature's contribution to the trained probability) - because the
+# three carry very different weight and should not read as interchangeable.
+class AnomalySignal(BaseModel):
+    name: str
+    layer: str
+    value: float = 0.0
+    contribution: float = 0.0
+    detail: str = ""
+
+
+# One scored document. `features` is included so any number in `detail` can be
+# checked against what it was computed from.
+class AnomalyResult(BaseModel):
+    document_id: int | None = None
+    source_file: str = ""
+    invoice_number: str = ""
+    score: float = 0.0
+    band: str = "Clean"          # Clean | Review | Suspect
+    method: str = "rules_only"   # rules_only | logistic_regression
+    signals: list[AnomalySignal] = []
+    features: dict = {}
+
+
+# A whole window, scored. `notes` carries the honest degradations - no model
+# installed, too few documents for the corpus checks - in the same way
+# /api/search/status does, so the page can say what it could not do.
+class AnomalyScanResponse(BaseModel):
+    from_date: str = ""
+    to_date: str = ""
+    doc_type: str = ""
+    documents: int = 0
+    corpus_n: int = 0
+    corpus_checks_ran: bool = False
+    method: str = "rules_only"
+    model_version: str = ""
+    results: list[AnomalyResult] = []
+    notes: list[str] = []

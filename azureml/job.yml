@@ -1,0 +1,49 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+
+# Submit with:  az ml job create -f azureml/job.yml
+#
+# STOP if .amlignore does not exist at the repo root. `code: ..` uploads the
+# whole repository to the workspace blob store, and Azure ML honours .amlignore
+# rather than .gitignore. Without it this line would upload backend-python/.env
+# and documents.db.
+
+experiment_name: gst-anomaly
+display_name: gst-anomaly-lr
+
+# The repo root, not this folder, because train.py imports anomaly_features from
+# backend-python. Training and serving MUST compute features with the same code:
+# a vendored copy would drift, and the exported coefficients would silently end
+# up fitted to one definition and applied to another.
+code: ..
+
+command: >-
+  PYTHONPATH=backend-python python azureml/train.py
+  --data ${{inputs.data}}
+  --out ${{outputs.model_dir}}
+  --seed 20260807
+  --target-precision 0.90
+  --holdout-types gstin_checksum_bad,item_sum_mismatch
+
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04
+  conda_file: environment.yml
+
+# min_instances: 0 on the cluster is what makes skipping a managed online
+# endpoint actually save money: the cluster costs nothing between runs, and the
+# trained model is applied in-process by the backend afterwards. Create it once:
+#   az ml compute create -n cpu-cluster --type amlcompute \
+#       --min-instances 0 --max-instances 1 --size Standard_DS3_v2
+compute: azureml:cpu-cluster
+
+inputs:
+  # Register the generated file first, so the run records exactly which corpus
+  # it learned from:
+  #   az ml data create -n synthetic-invoices -p azureml/data/synthetic_invoices.jsonl \
+  #       --type uri_file
+  data:
+    type: uri_file
+    path: azureml:synthetic-invoices@latest
+
+outputs:
+  model_dir:
+    type: uri_folder

@@ -5,6 +5,12 @@ import { HttpClient } from '@angular/common/http';
 // Address of the Python (FastAPI) backend.
 const backendUrl = 'http://localhost:8001';
 
+// HTTP status 0 means the request never arrived, which is almost always the
+// backend not running rather than anything wrong with the request. Every screen
+// says so the same way, so the sentence lives here once.
+const backendDownMessage =
+  'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).';
+
 @Component({
   selector: 'app-root',
   imports: [FormsModule],
@@ -59,6 +65,27 @@ export class App {
   searchHits: { id: string; entity: string; sheet: string; content: string }[] = [];
   searchTrace: { tool: string; arguments: any }[] = [];
   indexStatus = ''; // e.g. "84 chunks from Audit_04082026.xlsx"
+
+  // ---- Anomaly detector ----
+  // Scores each saved invoice 0-100. The rules need no training and no Azure, so
+  // this screen works before the Azure ML model exists; anomalyMethod says which
+  // of the two produced the numbers on screen.
+  anomalyFromDate = '';
+  anomalyToDate = '';
+  anomalyDocType = 'prebuilt-invoice'; // content checks only mean anything for invoices
+  anomalyLoading = false;
+  anomalyError = '';
+  anomalyStatus = '';
+  anomalyMethod = '';
+  anomalyNotes: string[] = [];
+  anomalyResults: {
+    documentId: number | null;
+    sourceFile: string;
+    invoiceNumber: string;
+    score: number;
+    band: string;
+    signals: { name: string; layer: string; detail: string; contribution: number }[];
+  }[] = [];
 
   files: { name: string; base64: string }[] = []; // the files the user picked
   prompt = ''; // the prompt the user types
@@ -135,8 +162,7 @@ export class App {
       },
       error: () => {
         this.loading = false;
-        this.errorMessage =
-          'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).';
+        this.errorMessage = backendDownMessage;
         this.cd.detectChanges();
       },
     });
@@ -192,7 +218,7 @@ export class App {
         this.exportLoading = false;
         this.exportError =
           err.status === 0
-            ? 'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).'
+            ? backendDownMessage
             : 'The export failed - check the dates and try again.';
         this.cd.detectChanges();
       },
@@ -260,7 +286,7 @@ export class App {
         this.searchLoading = false;
         this.searchError =
           err.status === 0
-            ? 'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).'
+            ? backendDownMessage
             : err.error?.detail || 'The search failed - try again.';
         this.cd.detectChanges();
       },
@@ -273,6 +299,95 @@ export class App {
     if (this.service === 'search') {
       this.loadIndexStatus();
     }
+    if (this.service === 'anomaly') {
+      this.loadAnomalyStatus();
+    }
+  }
+
+  // ---- Anomaly detector ----
+
+  // Score every saved invoice in the window. The backend applies the rules
+  // always and the trained model only if one is installed, so this returns
+  // useful findings whether or not the Azure ML half has been run.
+  scanAnomalies() {
+    if (!this.anomalyFromDate || !this.anomalyToDate) {
+      this.anomalyError = 'Please choose both dates.';
+      return;
+    }
+    if (this.anomalyFromDate > this.anomalyToDate) {
+      this.anomalyError = 'The from date must not be after the to date.';
+      return;
+    }
+
+    this.anomalyLoading = true;
+    this.anomalyError = '';
+    this.anomalyResults = [];
+    this.anomalyNotes = [];
+    const body = {
+      from_date: this.anomalyFromDate,
+      to_date: this.anomalyToDate,
+      doc_type: this.anomalyDocType,
+    };
+
+    this.http.post<any>(backendUrl + '/api/anomaly/scan', body).subscribe({
+      next: (r) => {
+        this.anomalyResults = (r.results || []).map((row: any) => ({
+          documentId: row.document_id,
+          sourceFile: row.source_file,
+          invoiceNumber: row.invoice_number,
+          score: row.score,
+          band: row.band,
+          // Model contributions are per-feature numbers, useful for debugging but
+          // not readable as findings, so the table shows the checks that fired.
+          signals: (row.signals || []).filter((s: any) => s.layer !== 'model'),
+        }));
+        this.anomalyMethod = r.method;
+        this.anomalyNotes = r.notes || [];
+        this.anomalyLoading = false;
+        this.cd.detectChanges();
+      },
+      error: (err) => {
+        this.anomalyLoading = false;
+        this.anomalyError =
+          err.status === 0
+            ? backendDownMessage
+            : err.error?.detail || 'The scan failed - check the dates and try again.';
+        this.cd.detectChanges();
+      },
+    });
+  }
+
+  // Whether a trained model is installed, so the page can say up front which
+  // kind of number the scores are before anyone reads one.
+  loadAnomalyStatus() {
+    this.anomalyStatus = 'Checking the anomaly detector...';
+    this.cd.detectChanges();
+    this.http.get<any>(backendUrl + '/api/anomaly/status').subscribe({
+      next: (r) => {
+        this.anomalyStatus = r.model_installed
+          ? 'Scoring with a logistic regression trained in Azure ML (run ' +
+            r.model_version + '), plus ' + r.rules + ' rules.'
+          : r.rules + ' deterministic rules, no trained model installed yet.';
+        if (r.notes?.length) {
+          this.anomalyStatus += ' (' + r.notes[0] + ')';
+        }
+        this.cd.detectChanges();
+      },
+      error: (err) => {
+        this.anomalyStatus =
+          err.status === 0
+            ? backendDownMessage
+            : 'The anomaly detector status could not be read: ' +
+              (err.error?.detail || 'HTTP ' + err.status) + '.';
+        this.cd.detectChanges();
+      },
+    });
+  }
+
+  // Excel's Good / Neutral / Bad colours, the same three the workbook uses to
+  // grade validity, so a red row means the same thing in both places.
+  bandClass(band: string): string {
+    return 'band-' + band.toLowerCase();
   }
 
   // How many chunks are indexed and which workbook they came from, so a stale
@@ -301,7 +416,7 @@ export class App {
         // sends you looking at Azure when the problem is a stopped terminal.
         this.indexStatus =
           err.status === 0
-            ? 'Could not reach the backend. Make sure it is running (cd backend-python, then uvicorn main:app --port 8001).'
+            ? backendDownMessage
             : 'The search index status could not be read: ' +
               (err.error?.detail || 'HTTP ' + err.status) + '.';
         this.cd.detectChanges();
