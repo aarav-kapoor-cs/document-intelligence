@@ -71,3 +71,8 @@ venv/
 
 # Claude Code local settings (personal, not shared)
 .claude/settings.local.json
+
+# Local training environment. scikit-learn lives here, never in
+# backend-python/.venv - the backend applies the model as a numpy dot product
+# and genuinely needs no ML library.
+.venv-train/
