@@ -72,6 +72,22 @@ FEATURE_NAMES = (
     "due_before_invoice_days",
 )
 
+# Of the twelve core fields, the ones a tax invoice cannot be valid without.
+#
+# The distinction matters because the other four are routinely absent from
+# perfectly good invoices: the real corpus carries a separate Tax Details block on
+# one invoice in four, and a Customer GSTIN on three in four. Treating every core
+# field as mandatory makes an ordinary invoice indistinguishable from one with a
+# field genuinely dropped, which is the mistake that made the first trained model
+# score every real document at 100.
+#
+# core_missing_count still counts all twelve, so the model keeps the full picture
+# and can learn its own weighting. This narrower set is what the RULE fires on.
+REQUIRED_FIELDS = (
+    "Invoice Id", "Invoice Date", "Vendor Name", "Vendor GSTIN",
+    "Total Invoice Amount", "Base Amount", "GST Amount", "Line Items",
+)
+
 # The same 0.80 the Angular app already highlights at (app.ts: isLowConfidence).
 # One number, one meaning - a second threshold here would mean the table and the
 # anomaly score disagreed about which fields were weak.
@@ -341,6 +357,11 @@ def build(fields) -> tuple[dict, dict]:
         "total": total,
         "item_sum": item_sum,
         "missing_core_fields": core_missing,
+        # What the rule fires on. Absent optional fields stay visible in
+        # missing_core_fields and in core_missing_count, but do not by themselves
+        # make a document suspicious.
+        "missing_required_fields": [name for name in core_missing
+                                    if name in REQUIRED_FIELDS],
         "invalid_core_fields": sorted(core_invalid),
     }
     return features, context

@@ -164,11 +164,16 @@ def evaluate(features: dict, context: dict) -> list[dict]:
     """
     fired = []
 
-    missing = context.get("missing_core_fields") or []
+    # Required fields only. A missing Tax Details block or Customer GSTIN is
+    # ordinary - three of the four real invoices lack one or the other - so firing
+    # on all twelve core fields would flag most of a healthy corpus.
+    missing = context.get("missing_required_fields") or []
     if missing:
+        optional_gone = len(context.get("missing_core_fields") or []) - len(missing)
+        extra = f" ({optional_gone} optional field(s) also absent)" if optional_gone else ""
         fired.append(_signal(
             "missing_core_field", len(missing),
-            f"{len(missing)} core field(s) empty: {', '.join(missing)}."))
+            f"{len(missing)} required field(s) empty: {', '.join(missing)}{extra}."))
 
     invalid = context.get("invalid_core_fields") or []
     if invalid:

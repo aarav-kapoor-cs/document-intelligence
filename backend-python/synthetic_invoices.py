@@ -187,6 +187,53 @@ def _clean_invoice(rng, vendor, customer, index) -> dict:
             for rate in sorted(set(item["_rate"] for item in items))
         ],
     }
+
+    # A correct invoice is NOT a complete one, and getting this wrong poisoned the
+    # first trained model. Every clean invoice used to carry all twelve core
+    # fields, so "a core field is missing" only ever occurred when
+    # core_field_dropped had been injected - and the model duly learned that a
+    # single absence means anomaly with near-certainty. Applied to real invoices,
+    # which routinely print no separate tax breakdown, it scored all seventeen at
+    # 100 and was useless.
+    #
+    # Rates measured from the real corpus: Tax Details appeared on 1 of 4 unique
+    # invoices, Customer GSTIN on 3 of 4. Kept slightly milder than measured
+    # because four invoices is a thin sample to extrapolate from.
+    #
+    # None of these four is in _inject's droppable list, so the injected anomaly
+    # stays a distinct thing rather than blurring into normal absence.
+    for key, omit_rate in (("TaxDetails", 0.55), ("CustomerTaxId", 0.25),
+                           ("VendorAddress", 0.12), ("CustomerName", 0.08)):
+        if rng.random() < omit_rate:
+            fields.pop(key, None)
+
+    # The other half of the same mistake, and the larger one. Azure's
+    # prebuilt-invoice schema is far wider than the fields above: it returns
+    # address recipients, separate billing and shipping blocks, emails, a purchase
+    # order. Real extractions carry 16 to 25 fields; this generator produced about
+    # twelve. field_count is in the feature vector, so every real invoice sat SIX
+    # standard deviations from the training data on that one number, which alone
+    # was worth enough log-odds to score it 100 whatever else it looked like.
+    #
+    # These are padding in the honest sense - the detector has no rule about any of
+    # them - but their presence is what a real document looks like.
+    for key, value, keep_rate in (
+            ("VendorAddressRecipient", vendor["name"], 0.95),
+            ("BillingAddress", customer["address"], 0.75),
+            ("BillingAddressRecipient", customer["name"], 0.75),
+            ("ShippingAddress", customer["address"], 0.60),
+            ("ShippingAddressRecipient", customer["name"], 0.60),
+            ("CustomerAddress", customer["address"], 0.45),
+            ("CustomerAddressRecipient", customer["name"], 0.45),
+            ("AmountDue", "₹" + _money(total), 0.35),
+            ("PurchaseOrder", "PO-" + _digits(rng, 5), 0.30),
+            ("CustomerId", _digits(rng, 6), 0.25),
+            ("VendorEmail", f"accounts@{vendor['name'].split()[0].lower()}.co.in", 0.25),
+            ("CustomerEmail", f"payables@{customer['name'].split()[0].lower()}.co.in", 0.25),
+    ):
+        if rng.random() < keep_rate:
+            fields[key] = value
+
     return {"fields": fields, "items": items, "subtotal": subtotal, "tax": tax,
             "total": total, "vendor": vendor, "invoice_date": invoice_date}
 
@@ -372,11 +419,18 @@ def _inject(rng, record, kind):
 def _confidence(rng):
     """A plausible Azure confidence.
 
-    Beta-shaped with a long left tail: most fields land high, a few land near the
-    0.296 the real data actually contains.
+    Deliberately bimodal, which a single Beta cannot reproduce. Azure returns most
+    fields high but a handful genuinely low - the real corpus has 21 of 258 values
+    under 0.80, and per-invoice minimums of 0.296, 0.414, 0.453 and 0.555.
+
+    The old single Beta(5, 0.7) put the MINIMUM confidence across an invoice near
+    0.72 in training against 0.41 in reality. conf_min is in the feature vector
+    with a large negative coefficient, so that gap alone was reading as an anomaly
+    on every real document.
     """
-    value = rng.betavariate(5.0, 0.7)
-    return round(min(0.999, max(0.05, value)), 3)
+    if rng.random() < 0.10:
+        return round(rng.uniform(0.28, 0.68), 3)
+    return round(min(0.999, max(0.05, rng.betavariate(6.0, 0.6))), 3)
 
 
 def _wrap(rng, fields, shape, weak_fields=()):
